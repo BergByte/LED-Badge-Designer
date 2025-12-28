@@ -30,6 +30,9 @@ type GifFrame = {
   durationSeconds: number;
 };
 
+const MIN_GIF_FRAME_DURATION = 0.01;
+const DEFAULT_GIF_FRAME_DURATION = 0.08;
+
 type Progress = {
   current: number;
   total: number;
@@ -47,6 +50,7 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
   const [startTime, setStartTime] = useState(0);
   const [endTime, setEndTime] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   const [progress, setProgress] = useState<Progress>({
     current: 0,
     total: 0,
@@ -68,6 +72,91 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
     };
   };
 
+  const extractGifFrameDurations = (buffer: ArrayBuffer, maxFrames?: number) => {
+    try {
+      const view = new DataView(buffer);
+      if (view.byteLength < 20) return [];
+      const header = String.fromCharCode(
+        view.getUint8(0),
+        view.getUint8(1),
+        view.getUint8(2),
+        view.getUint8(3),
+        view.getUint8(4),
+        view.getUint8(5)
+      );
+      if (header !== "GIF87a" && header !== "GIF89a") {
+        return [];
+      }
+
+      let offset = 6; // skip header
+      if (offset + 7 > view.byteLength) return [];
+      const lsdPacked = view.getUint8(offset + 4);
+      offset += 7;
+      if (lsdPacked & 0x80) {
+        const gctSize = 3 * 2 ** ((lsdPacked & 0x07) + 1);
+        offset += gctSize;
+      }
+
+      const durations: number[] = [];
+      let delayCs = 1; // centiseconds, default to 10ms per GIF spec guidance
+
+      const skipSubBlocks = () => {
+        while (offset < view.byteLength) {
+          const size = view.getUint8(offset++);
+          if (size === 0) break;
+          offset += size;
+        }
+      };
+
+      while (offset < view.byteLength) {
+        const blockId = view.getUint8(offset++);
+        if (blockId === 0x21) {
+          if (offset >= view.byteLength) break;
+          const label = view.getUint8(offset++);
+          if (label === 0xf9) {
+            const blockSize = view.getUint8(offset++);
+            if (blockSize === 4 && offset + 4 <= view.byteLength) {
+              offset += 1; // packed field
+              delayCs = view.getUint16(offset, true) || 1;
+              offset += 2; // delay
+              offset += 1; // transparent index
+              offset += 1; // block terminator
+            } else {
+              offset += blockSize;
+              offset += 1;
+            }
+          } else {
+            skipSubBlocks();
+          }
+        } else if (blockId === 0x2c) {
+          if (offset + 9 > view.byteLength) break;
+          const packedFields = view.getUint8(offset + 8);
+          offset += 9;
+          if (packedFields & 0x80) {
+            const lctSize = 3 * 2 ** ((packedFields & 0x07) + 1);
+            offset += lctSize;
+          }
+          offset += 1; // LZW min code size
+          skipSubBlocks(); // image data
+          durations.push(Math.max(delayCs / 100, MIN_GIF_FRAME_DURATION));
+          delayCs = 1;
+          if (maxFrames && durations.length >= maxFrames) {
+            break;
+          }
+        } else if (blockId === 0x3b) {
+          break;
+        } else {
+          break;
+        }
+      }
+
+      return durations;
+    } catch (err) {
+      console.warn("Unable to parse GIF frame durations", err);
+      return [];
+    }
+  };
+
   const decodeGif = async (file: File) => {
     const ImageDecoderCtor = getImageDecoder();
     if (!ImageDecoderCtor) {
@@ -76,6 +165,7 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
       );
     }
     const buffer = await file.arrayBuffer();
+    const gifDurations = extractGifFrameDurations(buffer);
     const decoder = new ImageDecoderCtor({
       data: new Uint8Array(buffer),
       type: file.type || "image/gif"
@@ -84,13 +174,15 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
     if (track && "ready" in track && track.ready instanceof Promise) {
       await track.ready;
     }
-    const frameCount = track?.frameCount ?? 0;
-    const totalFrames = frameCount > 0 ? frameCount : 1;
+    // Prefer frame count from parsed GIF metadata since some browsers report 1 for
+    // animated GIFs via ImageDecoder.tracks. Fall back to the decoder count.
+    const totalFrames = Math.max(track?.frameCount ?? 0, gifDurations.length, 1);
 
     const frames: GifFrame[] = [];
     let width = 0;
     let height = 0;
     let totalDuration = 0;
+    let usedDefaultDuration = false;
 
     for (let i = 0; i < totalFrames; i++) {
       try {
@@ -104,13 +196,19 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
           image.close();
         }
         const rawDuration = image.duration ?? 0;
+        const parsedDuration = gifDurations[i];
         const durationSeconds =
-          rawDuration > 0
-            ? Math.max(
-                rawDuration > 1000 ? rawDuration / 1_000_000 : rawDuration / 1000,
-                0.01
-              )
-            : 0.1;
+          parsedDuration !== undefined
+            ? Math.max(parsedDuration, MIN_GIF_FRAME_DURATION)
+            : rawDuration > 0
+              ? Math.max(
+                  rawDuration >= 10_000 ? rawDuration / 1_000_000 : rawDuration / 1000,
+                  MIN_GIF_FRAME_DURATION
+                )
+              : (() => {
+                  usedDefaultDuration = true;
+                  return DEFAULT_GIF_FRAME_DURATION;
+                })();
         totalDuration += durationSeconds;
         frames.push({ bitmap, durationSeconds });
       } catch (err) {
@@ -126,7 +224,7 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
     if (!frames.length) {
       throw new Error("No frames found in the GIF.");
     }
-    return { frames, width, height, duration: totalDuration };
+    return { frames, width, height, duration: totalDuration, usedDefaultDuration };
   };
 
   const loadVideoMetadata = (file: File, url: string) =>
@@ -207,6 +305,7 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
     const file = event.target.files?.[0];
     if (!file) return;
     setError(null);
+    setWarning(null);
     cancelRef.current = false;
 
     if (mediaUrl) {
@@ -240,6 +339,13 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
         setCroppedAreaPixels(defaultCrop);
         setCrop({ x: 0, y: 0 });
         setZoom(1);
+        if (decoded.usedDefaultDuration) {
+          setWarning(
+            `GIF is missing frame delay metadata; defaulting to ${DEFAULT_GIF_FRAME_DURATION.toFixed(
+              2
+            )}s per frame. Timing may differ from the original.`
+          );
+        }
         cropperVideoRef.current = null;
         const video = videoRef.current;
         if (video) {
@@ -784,6 +890,12 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
       {error && (
         <div className="alert alert-error">
           <span>{error}</span>
+        </div>
+      )}
+
+      {warning && (
+        <div className="alert alert-warning">
+          <span>{warning}</span>
         </div>
       )}
 
