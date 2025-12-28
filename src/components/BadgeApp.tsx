@@ -2,7 +2,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { DEFAULT_SPEED } from "@/config/constants";
+import { DEFAULT_SPEED, OUTPUT_HEIGHT, OUTPUT_WIDTH } from "@/config/constants";
 import { SPEEDS, speedToFps } from "@/config/speeds";
 import { BinaryFrame, RenderedSprite } from "@/types/frames";
 import { createBlankFrame } from "@/utils/frameUtils";
@@ -82,9 +82,14 @@ const PreviewCanvas = ({
         <div className="rounded-lg border border-base-300 bg-white p-3">
           <canvas
             ref={canvasRef}
-            width={48}
-            height={11}
-            className="border border-dashed border-base-300 rounded bg-base-100"
+            width={OUTPUT_WIDTH}
+            height={OUTPUT_HEIGHT}
+            className="border border-dashed border-base-300 rounded bg-base-100 w-full"
+            style={{
+              height: "auto",
+              imageRendering: "pixelated",
+              aspectRatio: `${OUTPUT_WIDTH} / ${OUTPUT_HEIGHT}`
+            }}
           />
         </div>
       </div>

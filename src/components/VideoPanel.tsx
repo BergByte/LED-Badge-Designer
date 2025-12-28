@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Cropper, { Area } from "react-easy-crop";
 import {
-  MAX_VIDEO_DURATION_SECONDS,
+  MAX_VIDEO_FRAMES,
   OUTPUT_ASPECT,
   OUTPUT_HEIGHT,
   OUTPUT_WIDTH
@@ -31,6 +31,7 @@ type Progress = {
 
 export default function VideoPanel({ fps, onFramesChange }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const cropperVideoRef = useRef<HTMLVideoElement | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [meta, setMeta] = useState<VideoMeta | null>(null);
   const [startTime, setStartTime] = useState(0);
@@ -63,13 +64,18 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
     return centerCropArea(meta.width, meta.height);
   }, [meta]);
 
+  const maxTrimSpanSeconds = useMemo(() => {
+    return MAX_VIDEO_FRAMES / fps;
+  }, [fps]);
+
   const effectiveDuration = useMemo(() => {
     if (!meta || endTime === null) return 0;
-    return Math.max(0, endTime - startTime);
-  }, [endTime, meta, startTime]);
+    const span = Math.max(0, endTime - startTime);
+    return Math.min(span, maxTrimSpanSeconds, meta.duration);
+  }, [endTime, maxTrimSpanSeconds, meta, startTime]);
 
   const estimatedFrames = useMemo(() => {
-    return Math.ceil(effectiveDuration * fps);
+    return Math.min(MAX_VIDEO_FRAMES, Math.ceil(effectiveDuration * fps));
   }, [effectiveDuration, fps]);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -115,10 +121,7 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
 
     loadMetadata()
       .then((metaInfo) => {
-        const cappedDuration = Math.min(
-          metaInfo.duration,
-          MAX_VIDEO_DURATION_SECONDS
-        );
+        const cappedDuration = Math.min(metaInfo.duration, maxTrimSpanSeconds);
         setMeta(metaInfo);
         setStartTime(0);
         setEndTime(cappedDuration);
@@ -141,18 +144,70 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
       });
   };
 
-  const clampTimes = (start: number, end: number, maxDuration: number) => {
-    const clampedStart = Math.max(0, Math.min(start, maxDuration));
-    const clampedEnd = Math.max(clampedStart + 0.01, Math.min(end, maxDuration));
-    const span = clampedEnd - clampedStart;
-    if (span > MAX_VIDEO_DURATION_SECONDS) {
-      return {
-        start: clampedStart,
-        end: clampedStart + MAX_VIDEO_DURATION_SECONDS
-      };
+  const clampTimes = (
+    start: number,
+    end: number,
+    videoDuration: number,
+    spanLimitSeconds: number
+  ) => {
+    const duration = Math.max(videoDuration, 0);
+    const limit = Math.min(spanLimitSeconds, duration);
+    const minGap = Math.min(0.01, limit);
+
+    let clampedStart = Math.max(0, Math.min(start, duration));
+    let clampedEnd = Math.max(clampedStart + minGap, Math.min(end, duration));
+
+    if (clampedEnd - clampedStart > limit) {
+      clampedEnd = clampedStart + limit;
     }
+
+    if (clampedEnd > duration) {
+      clampedEnd = duration;
+      clampedStart = Math.max(0, clampedEnd - limit);
+    }
+
     return { start: clampedStart, end: clampedEnd };
   };
+
+  useEffect(() => {
+    if (!meta || endTime === null) return;
+    const { start, end } = clampTimes(
+      startTime,
+      endTime,
+      meta.duration,
+      maxTrimSpanSeconds
+    );
+    if (start !== startTime) setStartTime(start);
+    if (end !== endTime) setEndTime(end);
+  }, [endTime, maxTrimSpanSeconds, meta, startTime]);
+
+  useEffect(() => {
+    const node = cropperVideoRef.current;
+    if (!node) return;
+
+    const clamp = () => {
+      if (endTime === null) return;
+      if (node.currentTime < startTime || node.currentTime > endTime - 0.01) {
+        node.currentTime = startTime;
+      }
+    };
+
+    const handleLoaded = () => {
+      node.currentTime = startTime;
+    };
+
+    node.loop = true;
+    node.addEventListener("loadedmetadata", handleLoaded);
+    node.addEventListener("timeupdate", clamp);
+    node.addEventListener("seeking", clamp);
+    clamp();
+
+    return () => {
+      node.removeEventListener("loadedmetadata", handleLoaded);
+      node.removeEventListener("timeupdate", clamp);
+      node.removeEventListener("seeking", clamp);
+    };
+  }, [cropperVideoRef, endTime, startTime, videoUrl]);
 
   const thresholdFrame = (imageData: ImageData): Uint8ClampedArray => {
     const { data, width, height } = imageData;
@@ -262,8 +317,8 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
         <div>
           <h3 className="card-title text-xl">Video → Badge</h3>
           <p className="text-sm opacity-70">
-            Upload a clip, trim to {MAX_VIDEO_DURATION_SECONDS}s, crop to 48:11, and render
-            at the selected FPS (inverted binary).
+            Upload a clip, trim to a max of {MAX_VIDEO_FRAMES} frames (limit scales with
+            FPS), crop to 48:11, and render at the selected FPS (inverted binary).
           </p>
         </div>
         <button
@@ -271,7 +326,7 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
           onClick={() => {
             setStartTime(0);
             if (meta) {
-              setEndTime(Math.min(meta.duration, MAX_VIDEO_DURATION_SECONDS));
+              setEndTime(Math.min(meta.duration, maxTrimSpanSeconds));
             }
           }}
         >
@@ -296,7 +351,7 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
           <div className="flex flex-wrap gap-2 text-sm">
             <span className="badge badge-outline">File: {meta.name}</span>
             <span className="badge badge-outline">
-              Duration: {meta.duration.toFixed(2)}s (cap {MAX_VIDEO_DURATION_SECONDS}s)
+              Duration: {meta.duration.toFixed(2)}s
             </span>
             <span className="badge badge-outline">
               Resolution: {meta.width}×{meta.height} · target {OUTPUT_ASPECT.toFixed(3)}
@@ -305,6 +360,10 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
               Output: {OUTPUT_WIDTH}×{OUTPUT_HEIGHT}
             </span>
             <span className="badge badge-secondary">FPS: {fps}</span>
+            <span className="badge badge-accent">
+              Max span: {Math.min(meta.duration, maxTrimSpanSeconds).toFixed(2)}s (
+              {MAX_VIDEO_FRAMES} frames)
+            </span>
           </div>
 
           <div className="grid gap-4 md:grid-cols-[2fr,1fr]">
@@ -324,6 +383,9 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
                   restrictPosition
                   initialCroppedAreaPixels={initialCropArea ?? undefined}
                   mediaProps={{ controls: true, muted: true }}
+                  setVideoRef={(ref) => {
+                    cropperVideoRef.current = ref?.current ?? null;
+                  }}
                 />
               ) : (
                 <div className="flex h-full items-center justify-center text-sm opacity-70">
@@ -371,6 +433,7 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
               </span>
               <span>
                 Span: {effectiveDuration.toFixed(2)}s · Est. frames: {estimatedFrames}
+                (cap {MAX_VIDEO_FRAMES})
               </span>
             </div>
             <div className="flex items-center gap-4">
@@ -384,7 +447,7 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
                 <input
                   type="range"
                   min={0}
-                  max={Math.min(meta.duration, MAX_VIDEO_DURATION_SECONDS)}
+                  max={meta.duration}
                   step={0.01}
                   value={startTime}
                   onChange={(e) => {
@@ -392,7 +455,8 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
                     const { start, end } = clampTimes(
                       next,
                       endTime,
-                      Math.min(meta.duration, MAX_VIDEO_DURATION_SECONDS)
+                      meta.duration,
+                      maxTrimSpanSeconds
                     );
                     setStartTime(start);
                     setEndTime(end);
@@ -410,7 +474,8 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
                   const { start, end } = clampTimes(
                     next,
                     endTime,
-                    Math.min(meta.duration, MAX_VIDEO_DURATION_SECONDS)
+                    meta.duration,
+                    maxTrimSpanSeconds
                   );
                   setStartTime(start);
                   setEndTime(end);
@@ -426,7 +491,7 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
                 <input
                   type="range"
                   min={0}
-                  max={Math.min(meta.duration, MAX_VIDEO_DURATION_SECONDS)}
+                  max={meta.duration}
                   step={0.01}
                   value={endTime}
                   onChange={(e) => {
@@ -434,7 +499,8 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
                     const { start, end } = clampTimes(
                       startTime,
                       next,
-                      Math.min(meta.duration, MAX_VIDEO_DURATION_SECONDS)
+                      meta.duration,
+                      maxTrimSpanSeconds
                     );
                     setStartTime(start);
                     setEndTime(end);
@@ -452,7 +518,8 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
                   const { start, end } = clampTimes(
                     startTime,
                     next,
-                    Math.min(meta.duration, MAX_VIDEO_DURATION_SECONDS)
+                    meta.duration,
+                    maxTrimSpanSeconds
                   );
                   setStartTime(start);
                   setEndTime(end);
