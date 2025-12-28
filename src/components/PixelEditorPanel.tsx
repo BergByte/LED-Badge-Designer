@@ -115,6 +115,16 @@ export default function PixelEditorPanel({ frames, fps, onChange }: Props) {
   const framesRef = useRef<BinaryFrame[]>(frames);
   const activeIdRef = useRef<string>(activeId);
 
+  const selectDrawBlack = useCallback(() => {
+    setBrushTool(BrushTool.DOT);
+    setBrushColor(BLACK);
+  }, []);
+
+  const selectDrawWhite = useCallback(() => {
+    setBrushTool(BrushTool.DOT);
+    setBrushColor(WHITE);
+  }, []);
+
   const activeFrame = useMemo(
     () => frames.find((frame) => frame.id === activeId) ?? frames[0] ?? createBlankFrame(),
     [activeId, frames]
@@ -251,15 +261,15 @@ export default function PixelEditorPanel({ frames, fps, onChange }: Props) {
     [onChange, syncFrameToCanvas]
   );
 
-  const addFrame = () => {
+  const addFrame = useCallback(() => {
     const newFrame = createBlankFrame();
     updateFrames((current) => {
       if (MAX_FRAMES && current.length >= MAX_FRAMES) return current;
       return [...current, newFrame];
     }, newFrame.id);
-  };
+  }, [updateFrames]);
 
-  const duplicateFrame = () => {
+  const duplicateFrame = useCallback(() => {
     const current = framesRef.current.find((frame) => frame.id === activeIdRef.current);
     if (!current) return;
     const newFrame = cloneFrame(current);
@@ -267,7 +277,7 @@ export default function PixelEditorPanel({ frames, fps, onChange }: Props) {
       if (MAX_FRAMES && existing.length >= MAX_FRAMES) return existing;
       return [...existing, newFrame];
     }, newFrame.id);
-  };
+  }, [updateFrames]);
 
   const deleteFrame = () => {
     updateFrames((current) => {
@@ -289,6 +299,39 @@ export default function PixelEditorPanel({ frames, fps, onChange }: Props) {
       return next;
     });
   };
+
+  useEffect(() => {
+    const handleKeydown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const tagName = target?.tagName;
+      const isEditing =
+        target?.isContentEditable ||
+        tagName === "INPUT" ||
+        tagName === "TEXTAREA" ||
+        tagName === "SELECT";
+      if (isEditing || event.metaKey || event.ctrlKey || event.altKey) return;
+
+      const key = event.key.toLowerCase();
+      if (key === "b") {
+        event.preventDefault();
+        selectDrawBlack();
+      } else if (key === "v") {
+        event.preventDefault();
+        selectDrawWhite();
+      } else if (key === "x") {
+        event.preventDefault();
+        addFrame();
+      } else if (key === "c") {
+        event.preventDefault();
+        duplicateFrame();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeydown);
+    return () => {
+      window.removeEventListener("keydown", handleKeydown);
+    };
+  }, [addFrame, duplicateFrame, selectDrawBlack, selectDrawWhite]);
 
   return (
     <div className="flex flex-col gap-5">
@@ -315,10 +358,10 @@ export default function PixelEditorPanel({ frames, fps, onChange }: Props) {
             onClick={addFrame}
             disabled={!!MAX_FRAMES && frames.length >= MAX_FRAMES}
           >
-            Add frame
+            Add frame (X)
           </button>
           <button className="btn btn-outline btn-sm join-item" onClick={duplicateFrame}>
-            Duplicate
+            Clone (C)
           </button>
           <button
             className="btn btn-outline btn-sm join-item"
@@ -336,23 +379,17 @@ export default function PixelEditorPanel({ frames, fps, onChange }: Props) {
             className={`btn btn-sm join-item ${
               brushTool === BrushTool.DOT && brushColor === BLACK ? "btn-primary" : "btn-outline"
             }`}
-            onClick={() => {
-              setBrushTool(BrushTool.DOT);
-              setBrushColor(BLACK);
-            }}
+            onClick={selectDrawBlack}
           >
-            Draw black
+            Draw black (B)
           </button>
           <button
             className={`btn btn-sm join-item ${
               brushTool === BrushTool.DOT && brushColor === WHITE ? "btn-primary" : "btn-outline"
             }`}
-            onClick={() => {
-              setBrushTool(BrushTool.DOT);
-              setBrushColor(WHITE);
-            }}
+            onClick={selectDrawWhite}
           >
-            Draw white
+            Draw white (V)
           </button>
           <button
             className={`btn btn-sm join-item ${
