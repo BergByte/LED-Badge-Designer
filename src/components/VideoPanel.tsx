@@ -46,6 +46,18 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
   const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(null);
   const cancelRef = useRef(false);
 
+  const centerCropArea = (videoWidth: number, videoHeight: number): Area => {
+    const videoAspect = videoWidth / videoHeight;
+    if (videoAspect > OUTPUT_ASPECT) {
+      const targetWidth = OUTPUT_ASPECT * videoHeight;
+      const sx = (videoWidth - targetWidth) / 2;
+      return { x: sx, y: 0, width: targetWidth, height: videoHeight };
+    }
+    const targetHeight = videoWidth / OUTPUT_ASPECT;
+    const sy = (videoHeight - targetHeight) / 2;
+    return { x: 0, y: sy, width: videoWidth, height: targetHeight };
+  };
+
   const initialCropArea = useMemo(() => {
     if (!meta) return null;
     return centerCropArea(meta.width, meta.height);
@@ -71,27 +83,62 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
       URL.revokeObjectURL(videoUrl);
     }
     setVideoUrl(url);
-    const video = videoRef.current;
-    if (!video) return;
-    video.src = url;
-    video.onloadedmetadata = () => {
-      const duration = Math.min(video.duration, MAX_VIDEO_DURATION_SECONDS);
-      setMeta({
-        name: file.name,
-        duration: video.duration,
-        width: video.videoWidth,
-        height: video.videoHeight
+
+    const loadMetadata = () =>
+      new Promise<VideoMeta>((resolve, reject) => {
+        const probe = document.createElement("video");
+        probe.preload = "metadata";
+        probe.muted = true;
+        probe.playsInline = true;
+        probe.addEventListener(
+          "loadedmetadata",
+          () => {
+            resolve({
+              name: file.name,
+              duration: probe.duration,
+              width: probe.videoWidth,
+              height: probe.videoHeight
+            });
+          },
+          { once: true }
+        );
+        probe.addEventListener(
+          "error",
+          () => {
+            reject(new Error("Unable to read video metadata"));
+          },
+          { once: true }
+        );
+        probe.src = url;
+        probe.load();
       });
-      setStartTime(0);
-      setEndTime(duration);
-      const defaultCrop = centerCropArea(video.videoWidth, video.videoHeight);
-      setCroppedAreaPixels(defaultCrop);
-      setCrop({ x: 0, y: 0 });
-      setZoom(1);
-    };
-    video.onerror = () => {
-      setError("Unable to read video metadata");
-    };
+
+    loadMetadata()
+      .then((metaInfo) => {
+        const cappedDuration = Math.min(
+          metaInfo.duration,
+          MAX_VIDEO_DURATION_SECONDS
+        );
+        setMeta(metaInfo);
+        setStartTime(0);
+        setEndTime(cappedDuration);
+        const defaultCrop = centerCropArea(metaInfo.width, metaInfo.height);
+        setCroppedAreaPixels(defaultCrop);
+        setCrop({ x: 0, y: 0 });
+        setZoom(1);
+
+        const video = videoRef.current;
+        if (video) {
+          video.preload = "metadata";
+          video.muted = true;
+          video.playsInline = true;
+          video.src = url;
+          video.load();
+        }
+      })
+      .catch((e) => {
+        setError((e as Error).message);
+      });
   };
 
   const clampTimes = (start: number, end: number, maxDuration: number) => {
@@ -105,20 +152,6 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
       };
     }
     return { start: clampedStart, end: clampedEnd };
-  };
-
-  const centerCropArea = (videoWidth: number, videoHeight: number): Area => {
-    const videoAspect = videoWidth / videoHeight;
-    if (videoAspect > OUTPUT_ASPECT) {
-      // Too wide, crop sides
-      const targetWidth = OUTPUT_ASPECT * videoHeight;
-      const sx = (videoWidth - targetWidth) / 2;
-      return { x: sx, y: 0, width: targetWidth, height: videoHeight };
-    }
-    // Too tall, crop top/bottom
-    const targetHeight = videoWidth / OUTPUT_ASPECT;
-    const sy = (videoHeight - targetHeight) / 2;
-    return { x: 0, y: sy, width: videoWidth, height: targetHeight };
   };
 
   const thresholdFrame = (imageData: ImageData): Uint8ClampedArray => {
