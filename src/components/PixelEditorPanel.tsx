@@ -24,8 +24,8 @@ const PixelCell = ({
 }) => (
   <button
     type="button"
-    className={`w-4 h-4 border border-slate-200 ${
-      value === 0 ? "bg-slate-900" : "bg-white"
+    className={`w-4 h-4 border border-base-300 transition ${
+      value === 0 ? "bg-neutral" : "bg-white"
     }`}
     onClick={onToggle}
   />
@@ -141,27 +141,27 @@ export default function PixelEditorPanel({ frames, fps, onChange }: Props) {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div className="space-y-1">
           <h3 className="text-lg font-semibold">Pixel Animation Editor</h3>
-          <p className="text-sm text-slate-600">
-            48×11 canvas with timeline controls. Frames: {frames.length} · Duration:{" "}
+          <p className="text-sm opacity-70">
+            48×11 grid with timeline controls. Frames: {frames.length} · Duration:{" "}
             {frameDuration.toFixed(2)}s @ {fps} fps
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="join">
           <button
-            className="px-3 py-2 rounded bg-slate-900 text-white"
+            className="btn btn-primary btn-sm join-item"
             onClick={addFrame}
             disabled={!!MAX_FRAMES && frames.length >= MAX_FRAMES}
           >
-            Add frame
+            Add
           </button>
-          <button className="px-3 py-2 rounded bg-slate-100" onClick={duplicateFrame}>
+          <button className="btn btn-outline btn-sm join-item" onClick={duplicateFrame}>
             Duplicate
           </button>
           <button
-            className="px-3 py-2 rounded bg-slate-100"
+            className="btn btn-outline btn-sm join-item"
             onClick={deleteFrame}
             disabled={frames.length <= 1}
           >
@@ -170,66 +170,49 @@ export default function PixelEditorPanel({ frames, fps, onChange }: Props) {
         </div>
       </div>
 
-      <div className="flex gap-3 text-sm">
-        <button
-          className="px-3 py-2 rounded border border-slate-200"
-          onClick={() => moveFrame(-1)}
-        >
+      <div className="flex flex-wrap gap-2 text-sm">
+        <button className="btn btn-outline btn-sm" onClick={() => moveFrame(-1)}>
           Move ←
         </button>
-        <button
-          className="px-3 py-2 rounded border border-slate-200"
-          onClick={() => moveFrame(1)}
-        >
+        <button className="btn btn-outline btn-sm" onClick={() => moveFrame(1)}>
           Move →
         </button>
-        <button
-          className="px-3 py-2 rounded border border-slate-200"
-          onClick={clearFrame}
-        >
+        <button className="btn btn-outline btn-sm" onClick={clearFrame}>
           Clear
         </button>
-        <button
-          className="px-3 py-2 rounded border border-slate-200"
-          onClick={() => fillFrame(0)}
-        >
+        <button className="btn btn-outline btn-sm" onClick={() => fillFrame(0)}>
           Fill black
         </button>
-        <button
-          className="px-3 py-2 rounded border border-slate-200"
-          onClick={() => fillFrame(255)}
-        >
+        <button className="btn btn-outline btn-sm" onClick={() => fillFrame(255)}>
           Fill white
         </button>
       </div>
 
-      <div className="border border-slate-200 rounded p-3 bg-slate-50 overflow-auto">
+      <div className="rounded-lg border border-base-300 bg-base-200/60 p-3 overflow-auto">
         {activeFrame ? (
           <FrameGrid
             frame={activeFrame}
             onUpdate={(data) => updateFrame(activeFrame.id, data)}
           />
         ) : (
-          <div className="text-sm text-slate-600">No frame selected.</div>
+          <div className="alert alert-info">No frame selected.</div>
         )}
       </div>
 
-      <div className="flex gap-2 overflow-auto">
+      <div className="flex gap-2 overflow-auto pb-1">
         {frames.map((frame, index) => (
           <button
             key={frame.id}
             onClick={() => setActiveId(frame.id)}
-            className={`flex flex-col items-center px-2 py-2 border rounded ${
-              frame.id === activeId
-                ? "border-emerald-500 bg-emerald-50"
-                : "border-slate-200 bg-white"
+            className={`btn btn-xs ${
+              frame.id === activeId ? "btn-primary" : "btn-outline"
             }`}
           >
-            <span className="text-xs text-slate-600">Frame {index + 1}</span>
+            Frame {index + 1}
           </button>
         ))}
       </div>
-      <p className="text-xs text-slate-500">
+      <p className="text-xs opacity-70">
         Timeline caps at {MAX_FRAMES} frames (configurable). Add, duplicate, reorder, and
         clear frames before rendering/exporting.
       </p>

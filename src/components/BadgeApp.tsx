@@ -32,7 +32,7 @@ const PreviewCanvas = ({
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const frameIndex = useRef(0);
-  const rafRef = useRef<number>();
+  const rafRef = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -70,20 +70,24 @@ const PreviewCanvas = ({
   }, [frames, fps]);
 
   return (
-    <div className="flex flex-col gap-2">
-      <div className="text-sm text-slate-600 flex items-center gap-3">
-        <span>Preview</span>
-        <span className="rounded bg-slate-100 px-2 py-1">
-          {frames.length} frame{frames.length === 1 ? "" : "s"}
-        </span>
-        <span className="rounded bg-slate-100 px-2 py-1">{fps} fps</span>
+    <div className="card bg-base-100 shadow-md">
+      <div className="card-body gap-3">
+        <div className="badge badge-secondary">Live preview</div>
+        <div className="flex items-center gap-2 text-sm opacity-70">
+          <span className="badge badge-ghost">
+            {frames.length} frame{frames.length === 1 ? "" : "s"}
+          </span>
+          <span className="badge badge-outline">{fps} fps</span>
+        </div>
+        <div className="rounded-lg border border-base-300 bg-white p-3">
+          <canvas
+            ref={canvasRef}
+            width={48}
+            height={11}
+            className="border border-dashed border-base-300 rounded bg-base-100"
+          />
+        </div>
       </div>
-      <canvas
-        ref={canvasRef}
-        width={48}
-        height={11}
-        className="border border-slate-200 rounded bg-white"
-      />
     </div>
   );
 };
@@ -96,10 +100,12 @@ const SpeedSelector = ({
   onChange: (speed: number) => void;
 }) => {
   return (
-    <label className="flex items-center gap-3 text-sm font-medium text-slate-800">
-      <span>Speed</span>
+    <label className="form-control w-full max-w-xs">
+      <div className="label">
+        <span className="label-text font-semibold">Speed / FPS</span>
+      </div>
       <select
-        className="border border-slate-200 rounded px-2 py-1 bg-white"
+        className="select select-bordered select-sm bg-base-100"
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
       >
@@ -126,20 +132,29 @@ const SpritePreview = ({ sprite }: { sprite: RenderedSprite | null }) => {
 
   if (!sprite || !url) {
     return (
-      <div className="text-sm text-slate-600">Render to see sprite preview.</div>
+      <div className="alert alert-info">
+        <span>Render to see sprite preview.</span>
+      </div>
     );
   }
 
   return (
-    <div className="flex flex-col gap-2">
-      <div className="text-sm text-slate-600">
-        Sprite: {sprite.width}×{sprite.height} ({sprite.frameCount} frames)
+    <div className="card bg-base-100 shadow">
+      <div className="card-body gap-3">
+        <div className="flex flex-wrap items-center gap-2 text-sm opacity-70">
+          <span className="badge badge-outline">
+            {sprite.width}×{sprite.height}
+          </span>
+          <span className="badge badge-ghost">{sprite.frameCount} frames</span>
+        </div>
+        <figure className="overflow-x-auto rounded border border-base-300 bg-white p-3">
+          <img
+            src={url}
+            alt="Rendered sprite"
+            className="max-w-full h-auto"
+          />
+        </figure>
       </div>
-      <img
-        src={url}
-        alt="Rendered sprite"
-        className="border border-slate-200 rounded bg-white max-w-full"
-      />
     </div>
   );
 };
@@ -174,79 +189,76 @@ export default function BadgeApp() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-white to-slate-50 text-slate-900">
-      <header className="px-6 pt-8 pb-10 border-b border-slate-200 bg-gradient-to-r from-emerald-50 to-slate-50">
-        <div className="max-w-5xl mx-auto flex flex-col gap-4">
-          <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
-            <div className="space-y-2">
+    <div className="min-h-screen bg-base-200 text-base-content">
+      <header className="bg-gradient-to-r from-primary/20 via-base-200 to-secondary/10">
+        <div className="max-w-6xl mx-auto px-6 py-10 flex flex-col gap-6">
+          <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6">
+            <div className="space-y-3">
               <div className="flex flex-wrap gap-2 text-xs font-semibold uppercase tracking-wide">
-                <span className="px-3 py-1 rounded-full bg-emerald-600 text-white">
-                  Client-only
-                </span>
-                <span className="px-3 py-1 rounded-full bg-slate-900 text-white">
-                  48×11 badge
-                </span>
-                <span className="px-3 py-1 rounded-full bg-white text-slate-700 border border-slate-200">
-                  Static export / GitHub Pages
-                </span>
+                <span className="badge badge-primary badge-lg">Client-only</span>
+                <span className="badge badge-neutral badge-lg">48×11 badge</span>
+                <span className="badge badge-outline badge-lg">Static export</span>
               </div>
-              <h1 className="text-3xl font-semibold">48×11 LED Badge Studio</h1>
-              <p className="text-sm text-slate-700 max-w-2xl leading-6">
-                Convert video trims or pixel art into a single-row, inverted monochrome
-                sprite, preview it at the exact FPS, and get it ready to send to the
-                Winbond 0416:5020 badge over WebHID/WebUSB.
-              </p>
-              <div className="flex gap-3 text-xs text-slate-700">
-                <span className="px-3 py-1 rounded bg-white border border-slate-200">
-                  Aspect: 48:11 · Output: PNG sprite
-                </span>
-                <span className="px-3 py-1 rounded bg-white border border-slate-200">
-                  Threshold: ≥128 → 0 · else 255
-                </span>
+              <div>
+                <p className="badge badge-info badge-outline">Video & Pixel → Sprite</p>
+                <h1 className="text-4xl font-bold mt-2">48×11 LED Badge Studio</h1>
+                <p className="text-sm opacity-80 max-w-3xl leading-6 mt-2">
+                  Trim or draw, lock to 48:11, invert to monochrome, preview at exact FPS,
+                  and export a single-row sprite ready for the Winbond 0416:5020 badge
+                  (WebHID/WebUSB planned).
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2 text-xs opacity-80">
+                <span className="badge badge-outline">Aspect 48:11 · Output PNG</span>
+                <span className="badge badge-outline">Threshold ≥128 → 0</span>
               </div>
             </div>
             <SpeedSelector value={speed} onChange={setSpeed} />
           </div>
+
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
-            <div className="p-3 rounded border border-slate-200 bg-white shadow-sm">
-              <div className="font-semibold text-slate-800">Status</div>
-              <p className="text-slate-600">
-                Pixel editor, preview, and sprite export are usable now. Video trim pipeline
-                and device transport are being wired in next.
-              </p>
+            <div className="card bg-base-100 shadow-sm border border-base-300">
+              <div className="card-body gap-2">
+                <div className="card-title text-base">Status</div>
+                <p className="opacity-80">
+                  Video trim + crop and pixel editor both render binary frames; sprite
+                  export is live. Device transport is queued next.
+                </p>
+              </div>
             </div>
-            <div className="p-3 rounded border border-slate-200 bg-white shadow-sm">
-              <div className="font-semibold text-slate-800">Preview fidelity</div>
-              <p className="text-slate-600">
-                Renders at 48×11 with inverted binary threshold and your selected FPS to
-                mirror badge playback.
-              </p>
+            <div className="card bg-base-100 shadow-sm border border-base-300">
+              <div className="card-body gap-2">
+                <div className="card-title text-base">Preview fidelity</div>
+                <p className="opacity-80">
+                  Renders at 48×11 with inverted binary threshold and your selected FPS to
+                  mirror badge playback.
+                </p>
+              </div>
             </div>
-            <div className="p-3 rounded border border-slate-200 bg-white shadow-sm">
-              <div className="font-semibold text-slate-800">Deployment</div>
-              <p className="text-slate-600">
-                Configured for static export with `basePath/assetPrefix` so GitHub Pages can
-                host everything without a backend.
-              </p>
+            <div className="card bg-base-100 shadow-sm border border-base-300">
+              <div className="card-body gap-2">
+                <div className="card-title text-base">Deployment</div>
+                <p className="opacity-80">
+                  Configured for static export with basePath/assetPrefix so GitHub Pages can
+                  host everything without a backend.
+                </p>
+              </div>
             </div>
           </div>
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-6 py-8 flex flex-col gap-6">
-        <div className="flex gap-3">
+      <main className="max-w-6xl mx-auto px-6 py-10 flex flex-col gap-8">
+        <div role="tablist" className="tabs tabs-boxed w-fit bg-base-100 shadow">
           {[
             { id: "video", label: "Video → Badge" },
             { id: "pixel", label: "Pixel Animation → Badge" }
           ].map((tab) => (
             <button
+              role="tab"
               key={tab.id}
               onClick={() => setMode(tab.id as Mode)}
-              className={`px-4 py-2 rounded border ${
-                mode === tab.id
-                  ? "bg-emerald-600 text-white border-emerald-600"
-                  : "bg-white border-slate-200 text-slate-700"
-              }`}
+              className={`tab ${mode === tab.id ? "tab-active" : ""}`}
             >
               {tab.label}
             </button>
@@ -254,70 +266,81 @@ export default function BadgeApp() {
         </div>
 
         <section className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2 bg-white border border-slate-200 rounded-lg shadow-sm p-4">
-            {mode === "video" ? (
-              <VideoPanel fps={fps} onFramesChange={onFramesChange} />
-            ) : (
-              <PixelEditorPanel fps={fps} frames={frames} onChange={onFramesChange} />
-            )}
+          <div className="lg:col-span-2">
+            <div className="card bg-base-100 shadow-xl border border-base-300">
+              <div className="card-body">
+                {mode === "video" ? (
+                  <VideoPanel fps={fps} onFramesChange={onFramesChange} />
+                ) : (
+                  <PixelEditorPanel fps={fps} frames={frames} onChange={onFramesChange} />
+                )}
+              </div>
+            </div>
           </div>
 
-          <div className="bg-white border border-slate-200 rounded-lg shadow-sm p-4 flex flex-col gap-4">
+          <div className="flex flex-col gap-4">
             <PreviewCanvas frames={frames} fps={fps} />
-            <div className="flex gap-2">
-              <button
-                className="flex-1 px-3 py-2 rounded bg-emerald-600 text-white font-semibold"
-                onClick={handleRender}
-              >
-                Render Sprite
-              </button>
-              <button
-                className="flex-1 px-3 py-2 rounded border border-slate-200 text-slate-800 bg-white"
-                onClick={handleDownload}
-                disabled={!sprite}
-              >
-                Download
-              </button>
-            </div>
-            {error && (
-              <div className="text-sm text-red-600 border border-red-100 bg-red-50 px-3 py-2 rounded">
-                {error}
+            <div className="card bg-base-100 shadow-md border border-base-300">
+              <div className="card-body gap-3">
+                <div className="flex gap-2">
+                  <button className="btn btn-primary flex-1" onClick={handleRender}>
+                    Render Sprite
+                  </button>
+                  <button
+                    className="btn btn-outline flex-1"
+                    onClick={handleDownload}
+                    disabled={!sprite}
+                  >
+                    Download
+                  </button>
+                </div>
+                {error && (
+                  <div className="alert alert-error text-sm">
+                    <span>{error}</span>
+                  </div>
+                )}
+                <SpritePreview sprite={sprite} />
               </div>
-            )}
-            <SpritePreview sprite={sprite} />
+            </div>
           </div>
         </section>
 
         <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="bg-white border border-slate-200 rounded-lg shadow-sm p-4">
-            <h3 className="text-base font-semibold mb-2">Video flow (soon)</h3>
-            <ol className="list-decimal list-inside text-sm text-slate-700 space-y-1">
-              <li>Upload .mp4/.mov/.webm</li>
-              <li>Trim within max duration and center-crop to 48:11</li>
-              <li>Extract frames at chosen FPS, invert/threshold, tile to sprite</li>
-              <li>Preview, then render and download the PNG</li>
-            </ol>
+          <div className="card bg-base-100 shadow-sm border border-base-300">
+            <div className="card-body gap-2">
+              <h3 className="card-title text-base">Video flow</h3>
+              <ol className="list-decimal list-inside text-sm opacity-80 space-y-1">
+                <li>Upload .mp4/.mov/.webm</li>
+                <li>Trim within max duration and crop to 48:11</li>
+                <li>Extract frames at chosen FPS, invert/threshold, tile to sprite</li>
+                <li>Preview, then render and download the PNG</li>
+              </ol>
+            </div>
           </div>
-          <div className="bg-white border border-slate-200 rounded-lg shadow-sm p-4">
-            <h3 className="text-base font-semibold mb-2">Pixel animation flow</h3>
-            <ol className="list-decimal list-inside text-sm text-slate-700 space-y-1">
-              <li>Draw on 48×11 grid with pen/erase/fill</li>
-              <li>Add/duplicate/delete/reorder frames in the timeline</li>
-              <li>Preview at Speed N (FPS) and inspect sprite width</li>
-              <li>Render and download the single-row PNG</li>
-            </ol>
+          <div className="card bg-base-100 shadow-sm border border-base-300">
+            <div className="card-body gap-2">
+              <h3 className="card-title text-base">Pixel animation flow</h3>
+              <ol className="list-decimal list-inside text-sm opacity-80 space-y-1">
+                <li>Draw on 48×11 grid with pen/erase/fill</li>
+                <li>Add/duplicate/delete/reorder frames in the timeline</li>
+                <li>Preview at Speed N (FPS) and inspect sprite width</li>
+                <li>Render and download the single-row PNG</li>
+              </ol>
+            </div>
           </div>
-          <div className="bg-white border border-slate-200 rounded-lg shadow-sm p-4">
-            <h3 className="text-base font-semibold mb-2">Send to badge (next)</h3>
-            <p className="text-sm text-slate-700">
-              WebHID/WebUSB transport with frame bit-packing and speed metadata will land
-              once the device protocol is confirmed. The connect/send controls will appear
-              below the preview panel.
-            </p>
+          <div className="card bg-base-100 shadow-sm border border-base-300">
+            <div className="card-body gap-2">
+              <h3 className="card-title text-base">Send to badge (next)</h3>
+              <p className="text-sm opacity-80">
+                WebHID/WebUSB transport with frame bit-packing and speed metadata will land
+                once the device protocol is confirmed. The connect/send controls will appear
+                below the preview panel.
+              </p>
+            </div>
           </div>
         </section>
 
-        <footer className="text-xs text-slate-500 pb-8">
+        <footer className="text-xs opacity-70 pb-8">
           Runs locally in your browser. Best in Chromium-based browsers with WebHID/WebUSB
           support. Static export ready for GitHub Pages.
         </footer>

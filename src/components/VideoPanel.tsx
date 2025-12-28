@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Cropper, { Area } from "react-easy-crop";
 import {
   MAX_VIDEO_DURATION_SECONDS,
   OUTPUT_ASPECT,
@@ -30,6 +31,7 @@ type Progress = {
 
 export default function VideoPanel({ fps, onFramesChange }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [meta, setMeta] = useState<VideoMeta | null>(null);
   const [startTime, setStartTime] = useState(0);
   const [endTime, setEndTime] = useState<number | null>(null);
@@ -39,7 +41,15 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
     total: 0,
     status: "idle"
   });
+  const [crop, setCrop] = useState({ x: 0, y: 0 });
+  const [zoom, setZoom] = useState(1);
+  const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(null);
   const cancelRef = useRef(false);
+
+  const initialCropArea = useMemo(() => {
+    if (!meta) return null;
+    return centerCropArea(meta.width, meta.height);
+  }, [meta]);
 
   const effectiveDuration = useMemo(() => {
     if (!meta || endTime === null) return 0;
@@ -57,6 +67,10 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
     cancelRef.current = false;
 
     const url = URL.createObjectURL(file);
+    if (videoUrl) {
+      URL.revokeObjectURL(videoUrl);
+    }
+    setVideoUrl(url);
     const video = videoRef.current;
     if (!video) return;
     video.src = url;
@@ -70,6 +84,10 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
       });
       setStartTime(0);
       setEndTime(duration);
+      const defaultCrop = centerCropArea(video.videoWidth, video.videoHeight);
+      setCroppedAreaPixels(defaultCrop);
+      setCrop({ x: 0, y: 0 });
+      setZoom(1);
     };
     video.onerror = () => {
       setError("Unable to read video metadata");
@@ -89,21 +107,18 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
     return { start: clampedStart, end: clampedEnd };
   };
 
-  const centerCrop = (
-    videoWidth: number,
-    videoHeight: number
-  ): { sx: number; sy: number; sw: number; sh: number } => {
+  const centerCropArea = (videoWidth: number, videoHeight: number): Area => {
     const videoAspect = videoWidth / videoHeight;
     if (videoAspect > OUTPUT_ASPECT) {
       // Too wide, crop sides
       const targetWidth = OUTPUT_ASPECT * videoHeight;
       const sx = (videoWidth - targetWidth) / 2;
-      return { sx, sy: 0, sw: targetWidth, sh: videoHeight };
+      return { x: sx, y: 0, width: targetWidth, height: videoHeight };
     }
     // Too tall, crop top/bottom
     const targetHeight = videoWidth / OUTPUT_ASPECT;
     const sy = (videoHeight - targetHeight) / 2;
-    return { sx: 0, sy, sw: videoWidth, sh: targetHeight };
+    return { x: 0, y: sy, width: videoWidth, height: targetHeight };
   };
 
   const thresholdFrame = (imageData: ImageData): Uint8ClampedArray => {
@@ -132,7 +147,8 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
     setProgress({ current: 0, total: estimatedFrames, status: "preparing" });
 
     const video = videoRef.current;
-    const { sx, sy, sw, sh } = centerCrop(meta.width, meta.height);
+    const cropArea =
+      croppedAreaPixels ?? centerCropArea(meta.width, meta.height);
     const canvas = document.createElement("canvas");
     canvas.width = OUTPUT_WIDTH;
     canvas.height = OUTPUT_HEIGHT;
@@ -171,10 +187,10 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
       await seekTo(clampedTime);
       ctx.drawImage(
         video,
-        sx,
-        sy,
-        sw,
-        sh,
+        cropArea.x,
+        cropArea.y,
+        cropArea.width,
+        cropArea.height,
         0,
         0,
         OUTPUT_WIDTH,
@@ -201,21 +217,24 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
       if (video) {
         URL.revokeObjectURL(video.src);
       }
+      if (videoUrl) {
+        URL.revokeObjectURL(videoUrl);
+      }
     };
-  }, []);
+  }, [videoUrl]);
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between">
+    <div className="flex flex-col gap-6">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
-          <h3 className="text-lg font-semibold">Video → Badge</h3>
-          <p className="text-sm text-slate-600">
-            Upload a clip, trim to {MAX_VIDEO_DURATION_SECONDS}s, center-crop to 48:11, and
-            render at the selected FPS (inverted binary).
+          <h3 className="card-title text-xl">Video → Badge</h3>
+          <p className="text-sm opacity-70">
+            Upload a clip, trim to {MAX_VIDEO_DURATION_SECONDS}s, crop to 48:11, and render
+            at the selected FPS (inverted binary).
           </p>
         </div>
         <button
-          className="text-sm text-emerald-700 hover:text-emerald-900"
+          className="btn btn-link btn-sm"
           onClick={() => {
             setStartTime(0);
             if (meta) {
@@ -227,32 +246,93 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
         </button>
       </div>
 
-      <label className="flex flex-col gap-2 border border-dashed border-slate-300 rounded p-4 bg-slate-50">
-        <span className="text-sm font-medium text-slate-800">Upload video</span>
-        <input type="file" accept="video/*" onChange={handleFileChange} />
+      <label className="form-control w-full">
+        <div className="label">
+          <span className="label-text font-semibold">Upload video</span>
+        </div>
+        <input
+          type="file"
+          accept="video/*"
+          onChange={handleFileChange}
+          className="file-input file-input-bordered w-full"
+        />
       </label>
 
       {meta && endTime !== null && (
-        <div className="flex flex-col gap-3 bg-white border border-slate-200 rounded p-3">
-          <div className="text-sm text-slate-700 flex flex-wrap gap-2">
-            <span className="px-2 py-1 rounded bg-slate-100">
-              File: {meta.name}
-            </span>
-            <span className="px-2 py-1 rounded bg-slate-100">
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-wrap gap-2 text-sm">
+            <span className="badge badge-outline">File: {meta.name}</span>
+            <span className="badge badge-outline">
               Duration: {meta.duration.toFixed(2)}s (cap {MAX_VIDEO_DURATION_SECONDS}s)
             </span>
-            <span className="px-2 py-1 rounded bg-slate-100">
-              Resolution: {meta.width}×{meta.height} · target aspect{" "}
-              {OUTPUT_ASPECT.toFixed(3)}
+            <span className="badge badge-outline">
+              Resolution: {meta.width}×{meta.height} · target {OUTPUT_ASPECT.toFixed(3)}
             </span>
-            <span className="px-2 py-1 rounded bg-slate-100">
+            <span className="badge badge-outline">
               Output: {OUTPUT_WIDTH}×{OUTPUT_HEIGHT}
             </span>
-            <span className="px-2 py-1 rounded bg-slate-100">FPS: {fps}</span>
+            <span className="badge badge-secondary">FPS: {fps}</span>
           </div>
 
-          <div className="flex flex-col gap-2">
-            <div className="flex items-center justify-between text-sm text-slate-700">
+          <div className="grid gap-4 md:grid-cols-[2fr,1fr]">
+            <div className="relative h-72 w-full overflow-hidden rounded-2xl border border-base-300 bg-base-200">
+              {videoUrl ? (
+                <Cropper
+                  video={videoUrl}
+                  crop={crop}
+                  zoom={zoom}
+                  aspect={OUTPUT_ASPECT}
+                  onCropChange={setCrop}
+                  onZoomChange={setZoom}
+                  onCropComplete={(_area, pixels) => setCroppedAreaPixels(pixels)}
+                  objectFit="contain"
+                  minZoom={1}
+                  maxZoom={5}
+                  restrictPosition
+                  initialCroppedAreaPixels={initialCropArea ?? undefined}
+                  mediaProps={{ controls: true, muted: true }}
+                />
+              ) : (
+                <div className="flex h-full items-center justify-center text-sm opacity-70">
+                  Upload a video to adjust crop
+                </div>
+              )}
+            </div>
+            <div className="flex flex-col gap-3 text-sm">
+              <p>
+                Crop is locked to the badge aspect (48:11). Drag to reposition and use zoom
+                to punch in before scaling down to 48×11.
+              </p>
+              <label className="form-control">
+                <div className="label">
+                  <span className="label-text">Zoom</span>
+                  <span className="label-text-alt">{zoom.toFixed(2)}×</span>
+                </div>
+                <input
+                  type="range"
+                  min={1}
+                  max={5}
+                  step={0.01}
+                  value={zoom}
+                  onChange={(e) => setZoom(Number(e.target.value))}
+                  className="range range-primary"
+                />
+              </label>
+              <span className="text-xs opacity-70">
+                Crop area:{" "}
+                {croppedAreaPixels
+                  ? `${Math.round(croppedAreaPixels.width)}×${Math.round(
+                      croppedAreaPixels.height
+                    )} @ (${Math.round(croppedAreaPixels.x)}, ${Math.round(
+                      croppedAreaPixels.y
+                    )})`
+                  : "Using centered crop"}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center justify-between text-sm opacity-80">
               <span>
                 Trim start: {startTime.toFixed(2)}s · Trim end: {endTime.toFixed(2)}s
               </span>
@@ -260,29 +340,36 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
                 Span: {effectiveDuration.toFixed(2)}s · Est. frames: {estimatedFrames}
               </span>
             </div>
-            <div className="flex items-center gap-3">
-              <label className="text-xs text-slate-600 w-20">Start</label>
-              <input
-                type="range"
-                min={0}
-                max={Math.min(meta.duration, MAX_VIDEO_DURATION_SECONDS)}
-                step={0.01}
-                value={startTime}
-                onChange={(e) => {
-                  const next = Number(e.target.value);
-                  const { start, end } = clampTimes(
-                    next,
-                    endTime,
-                    Math.min(meta.duration, MAX_VIDEO_DURATION_SECONDS)
-                  );
-                  setStartTime(start);
-                  setEndTime(end);
-                }}
-                className="flex-1"
-              />
+            <div className="flex items-center gap-4">
+              <label className="form-control w-full">
+                <div className="label">
+                  <span className="label-text text-xs">Start</span>
+                  <span className="label-text-alt text-xs">
+                    {startTime.toFixed(2)}s
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={Math.min(meta.duration, MAX_VIDEO_DURATION_SECONDS)}
+                  step={0.01}
+                  value={startTime}
+                  onChange={(e) => {
+                    const next = Number(e.target.value);
+                    const { start, end } = clampTimes(
+                      next,
+                      endTime,
+                      Math.min(meta.duration, MAX_VIDEO_DURATION_SECONDS)
+                    );
+                    setStartTime(start);
+                    setEndTime(end);
+                  }}
+                  className="range range-secondary"
+                />
+              </label>
               <input
                 type="number"
-                className="w-24 border border-slate-200 rounded px-2 py-1 text-sm"
+                className="input input-bordered input-sm w-24"
                 value={startTime.toFixed(2)}
                 step={0.1}
                 onChange={(e) => {
@@ -297,29 +384,34 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
                 }}
               />
             </div>
-            <div className="flex items-center gap-3">
-              <label className="text-xs text-slate-600 w-20">End</label>
-              <input
-                type="range"
-                min={0}
-                max={Math.min(meta.duration, MAX_VIDEO_DURATION_SECONDS)}
-                step={0.01}
-                value={endTime}
-                onChange={(e) => {
-                  const next = Number(e.target.value);
-                  const { start, end } = clampTimes(
-                    startTime,
-                    next,
-                    Math.min(meta.duration, MAX_VIDEO_DURATION_SECONDS)
-                  );
-                  setStartTime(start);
-                  setEndTime(end);
-                }}
-                className="flex-1"
-              />
+            <div className="flex items-center gap-4">
+              <label className="form-control w-full">
+                <div className="label">
+                  <span className="label-text text-xs">End</span>
+                  <span className="label-text-alt text-xs">{endTime.toFixed(2)}s</span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={Math.min(meta.duration, MAX_VIDEO_DURATION_SECONDS)}
+                  step={0.01}
+                  value={endTime}
+                  onChange={(e) => {
+                    const next = Number(e.target.value);
+                    const { start, end } = clampTimes(
+                      startTime,
+                      next,
+                      Math.min(meta.duration, MAX_VIDEO_DURATION_SECONDS)
+                    );
+                    setStartTime(start);
+                    setEndTime(end);
+                  }}
+                  className="range range-secondary"
+                />
+              </label>
               <input
                 type="number"
-                className="w-24 border border-slate-200 rounded px-2 py-1 text-sm"
+                className="input input-bordered input-sm w-24"
                 value={endTime.toFixed(2)}
                 step={0.1}
                 onChange={(e) => {
@@ -334,22 +426,22 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
                 }}
               />
             </div>
-            <p className="text-xs text-slate-600">
-              Aspect policy: center-crop to 48:11, nearest-neighbor scale to 48×11, then
-              grayscale → threshold (≥128→0, else 255).
+            <p className="text-xs opacity-70">
+              Aspect policy: crop locked to 48:11 (default is centered), nearest-neighbor
+              scale to 48×11, then grayscale → threshold (≥128→0, else 255).
             </p>
           </div>
 
           <div className="flex flex-wrap gap-2">
             <button
-              className="px-4 py-2 rounded bg-emerald-600 text-white font-semibold disabled:opacity-50"
+              className="btn btn-primary"
               onClick={renderFrames}
               disabled={progress.status === "rendering"}
             >
               Render frames from video
             </button>
             <button
-              className="px-4 py-2 rounded border border-slate-200 bg-white text-slate-800 disabled:opacity-50"
+              className="btn btn-outline"
               onClick={() => {
                 cancelRef.current = true;
               }}
@@ -358,7 +450,7 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
               Cancel
             </button>
             <button
-              className="px-4 py-2 rounded border border-slate-200 bg-white text-slate-800"
+              className="btn btn-outline"
               onClick={() => {
                 setError(null);
                 onFramesChange([createBlankFrame()]);
@@ -368,37 +460,33 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
             </button>
           </div>
 
-          <div className="text-sm text-slate-700 flex items-center gap-3">
-            <span>Status: {progress.status}</span>
-            {progress.total > 0 && (
-              <span>
-                {progress.current}/{progress.total}
-              </span>
-            )}
+          <div className="flex flex-col gap-2 text-sm">
+            <div className="flex items-center gap-3">
+              <span className="badge badge-ghost">Status: {progress.status}</span>
+              {progress.total > 0 && (
+                <span className="badge badge-outline">
+                  {progress.current}/{progress.total}
+                </span>
+              )}
+            </div>
             {progress.status === "rendering" && (
-              <span className="flex-1 h-2 rounded bg-slate-100 overflow-hidden">
-                <span
-                  className="block h-full bg-emerald-500"
-                  style={{
-                    width: `${Math.min(
-                      100,
-                      (progress.current / Math.max(1, progress.total)) * 100
-                    )}%`
-                  }}
-                />
-              </span>
+              <progress
+                className="progress progress-primary"
+                value={progress.current}
+                max={progress.total}
+              />
             )}
           </div>
         </div>
       )}
 
       {error && (
-        <div className="text-sm text-red-700 bg-red-50 border border-red-100 rounded p-3">
-          {error}
+        <div className="alert alert-error">
+          <span>{error}</span>
         </div>
       )}
 
-      <div className="border border-emerald-100 bg-emerald-50 rounded p-3 text-sm text-emerald-800">
+      <div className="alert alert-success">
         ffmpeg.wasm worker integration is planned; current implementation uses canvas-based
         frame sampling with the required crop/threshold/invert to mirror the final badge
         output until the wasm pipeline is wired.

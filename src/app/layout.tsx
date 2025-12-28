@@ -1,4 +1,5 @@
 import "../styles/globals.css";
+import "react-easy-crop/react-easy-crop.css";
 import type { Metadata } from "next";
 import React from "react";
 import { Space_Grotesk } from "next/font/google";
@@ -19,7 +20,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body className={font.className}>{children}</body>
     </html>
   );

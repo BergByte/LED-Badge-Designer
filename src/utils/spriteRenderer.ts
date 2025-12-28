@@ -40,12 +40,14 @@ export async function renderFramesToSpritePNG(
   }
 
   frames.forEach((frame, index) => {
-    const imageData = new ImageData(
-      expandToRgba(frame.data),
-      frame.width,
-      frame.height
+    const imageData = new ImageData(frame.width, frame.height);
+    imageData.data.set(expandToRgba(frame.data));
+    // putImageData is shared across both OffscreenCanvas and HTMLCanvas contexts
+    (ctx as CanvasRenderingContext2D).putImageData(
+      imageData,
+      index * OUTPUT_WIDTH,
+      0
     );
-    ctx.putImageData(imageData, index * OUTPUT_WIDTH, 0);
   });
 
   const blob =
