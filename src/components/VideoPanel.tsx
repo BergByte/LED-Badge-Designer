@@ -56,6 +56,7 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
     total: 0,
     status: "idle"
   });
+  const [threshold, setThreshold] = useState(128);
   const [crop, setCrop] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(null);
@@ -453,7 +454,7 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
       const g = data[i + 1];
       const b = data[i + 2];
       const gray = 0.299 * r + 0.587 * g + 0.114 * b;
-      const val = gray >= 128 ? 0 : 255; // invert: >=128 -> 0
+      const val = gray >= threshold ? 0 : 255; // invert: >=threshold -> 0
       const idx = i / 4;
       out[idx] = val;
     }
@@ -616,7 +617,7 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
           <p className="text-sm opacity-70">
             Upload a clip or animated GIF, trim to a max of {MAX_VIDEO_FRAMES} frames
             (limit scales with FPS), crop to 48:11, and render at the selected FPS
-            (inverted binary).
+            (inverted binary with adjustable threshold).
           </p>
         </div>
         <button
@@ -630,6 +631,31 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
         >
           Reset trim
         </button>
+      </div>
+
+      <div className="card bg-base-100 border border-base-300 shadow-sm">
+        <div className="card-body gap-3">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="font-semibold text-sm">Threshold</div>
+              <p className="text-xs opacity-70">
+                Choose the cutoff used to convert grayscale into black/white pixels (higher = more black).
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <input
+                type="range"
+                min={0}
+                max={255}
+                step={1}
+                className="range range-sm max-w-xs"
+                value={threshold}
+                onChange={(e) => setThreshold(Number(e.target.value))}
+              />
+              <div className="w-12 text-right text-sm tabular-nums">{threshold}</div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <label className="form-control w-full">
@@ -835,7 +861,7 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
             </div>
             <p className="text-xs opacity-70">
               Aspect policy: crop locked to 48:11 (default is centered), nearest-neighbor
-              scale to 48×11, then grayscale → threshold (≥128→0, else 255).
+              scale to 48×11, then grayscale → threshold (slider sets cutoff; ≥threshold → 0).
             </p>
           </div>
 

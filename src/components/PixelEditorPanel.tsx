@@ -10,6 +10,7 @@ import {
   CanvasDataChangeParams,
   CanvasStrokeEndParams,
   Dotting,
+  DottingData,
   DottingRef,
   PixelModifyItem
 } from "dotting";
@@ -23,6 +24,10 @@ type Props = {
 const BLACK = "#000000";
 const WHITE = "#ffffff";
 const LAYER_ID = "frame-layer";
+const PREVIOUS_NEAR_GHOST_COLOR = "rgba(239, 68, 68, 1)"; // bright red for frame -1
+const PREVIOUS_FAR_GHOST_COLOR = "rgba(239, 68, 68, 0.5)"; // softer red for frame -2
+const FUTURE_NEAR_GHOST_COLOR = "rgba(34, 197, 94, 1)"; // bright green for frame +1
+const FUTURE_FAR_GHOST_COLOR = "rgba(34, 197, 94, 0.5)"; // softer green for frame +2
 
 const clampFrames = (frames: BinaryFrame[]) =>
   frames.slice(0, MAX_FRAMES || frames.length);
@@ -48,6 +53,22 @@ const layerDataToFrame = (data: PixelModifyItem[][], baseFrame: BinaryFrame): Bi
       if (item.columnIndex < 0 || item.columnIndex >= baseFrame.width) return;
       const idx = item.rowIndex * baseFrame.width + item.columnIndex;
       const color = (item.color || WHITE).toLowerCase();
+      const isBlack =
+        color === BLACK || color === "#000" || color === "rgb(0,0,0)" || color === "black";
+      next[idx] = isBlack ? 0 : 255;
+    });
+  });
+  return { ...baseFrame, data: next, width: baseFrame.width, height: baseFrame.height };
+};
+
+const dottingDataToFrame = (data: DottingData, baseFrame: BinaryFrame): BinaryFrame => {
+  const next = new Uint8ClampedArray(baseFrame.width * baseFrame.height).fill(255);
+  data.forEach((columnMap, rowIndex) => {
+    if (rowIndex < 0 || rowIndex >= baseFrame.height) return;
+    columnMap.forEach((pixel, columnIndex) => {
+      if (columnIndex < 0 || columnIndex >= baseFrame.width) return;
+      const idx = rowIndex * baseFrame.width + columnIndex;
+      const color = (pixel.color || WHITE).toLowerCase();
       const isBlack =
         color === BLACK || color === "#000" || color === "rgb(0,0,0)" || color === "black";
       next[idx] = isBlack ? 0 : 255;
@@ -183,27 +204,79 @@ export default function PixelEditorPanel({ frames, fps, onChange }: Props) {
     instance.changeBrushTool(brushTool);
   }, [brushColor, brushTool, dottingInstance]);
 
-  const pushCanvasToFrames = useCallback(() => {
+  const updateGhostPixels = useCallback(() => {
     const instance = dottingRef.current;
     if (!instance) return;
-    const layers = instance.getLayersAsArray?.();
-    const layer = layers?.find((item) => item.id === LAYER_ID) ?? layers?.[0];
-    if (!layer) return;
+
     const currentFrames = framesRef.current;
-    const currentActive = currentFrames.find((frame) => frame.id === activeIdRef.current);
-    if (!currentActive) return;
-    const nextFrame = layerDataToFrame(layer.data, currentActive);
-    const nextFrames = currentFrames.map((frame) =>
-      frame.id === currentActive.id ? nextFrame : frame
-    );
-    framesRef.current = nextFrames;
-    onChange(nextFrames);
-  }, [onChange]);
+    const activeIndex = currentFrames.findIndex((frame) => frame.id === activeIdRef.current);
+    if (activeIndex === -1) return;
+    const activeFrame = currentFrames[activeIndex];
+
+    const collectGhostPixels = (frameIndex: number, color: string): PixelModifyItem[] => {
+      const items: PixelModifyItem[] = [];
+      const frame = currentFrames[frameIndex];
+      if (!frame) return items;
+      for (let row = 0; row < frame.height; row++) {
+        for (let col = 0; col < frame.width; col++) {
+          const idx = row * frame.width + col;
+          const isWhiteInGhost = frame.data[idx] !== 0;
+          const isWhiteInActive = activeFrame.data[idx] !== 0;
+          // Only show when the ghost frame has a white pixel that differs from the active frame
+          if (isWhiteInGhost && !isWhiteInActive) {
+            items.push({ rowIndex: row, columnIndex: col, color });
+          }
+        }
+      }
+      return items;
+    };
+
+    // Render farther frames first so closer frames sit on top if they overlap
+    const previousGhosts = [
+      ...collectGhostPixels(activeIndex - 2, PREVIOUS_FAR_GHOST_COLOR),
+      ...collectGhostPixels(activeIndex - 1, PREVIOUS_NEAR_GHOST_COLOR)
+    ];
+    const futureGhosts = [
+      ...collectGhostPixels(activeIndex + 2, FUTURE_FAR_GHOST_COLOR),
+      ...collectGhostPixels(activeIndex + 1, FUTURE_NEAR_GHOST_COLOR)
+    ];
+
+    instance.setIndicatorPixels([...previousGhosts, ...futureGhosts]);
+  }, []);
+
+  const pushCanvasToFrames = useCallback(
+    (liveData?: DottingData) => {
+      const instance = dottingRef.current;
+      if (!instance) return;
+      const currentFrames = framesRef.current;
+      const currentActive = currentFrames.find((frame) => frame.id === activeIdRef.current);
+      if (!currentActive) return;
+      let nextFrame: BinaryFrame | null = null;
+
+      if (liveData) {
+        nextFrame = dottingDataToFrame(liveData, currentActive);
+      } else {
+        const layers = instance.getLayersAsArray?.();
+        const layer = layers?.find((item) => item.id === LAYER_ID) ?? layers?.[0];
+        if (!layer) return;
+        nextFrame = layerDataToFrame(layer.data, currentActive);
+      }
+
+      if (!nextFrame) return;
+      const nextFrames = currentFrames.map((frame) =>
+        frame.id === currentActive.id ? nextFrame : frame
+      );
+      framesRef.current = nextFrames;
+      onChange(nextFrames);
+      updateGhostPixels();
+    },
+    [onChange, updateGhostPixels]
+  );
 
   const handleDataChange = useCallback(
     (params: CanvasDataChangeParams) => {
       if (!params.isLocalChange) return;
-      pushCanvasToFrames();
+      pushCanvasToFrames(params.data);
     },
     [pushCanvasToFrames]
   );
@@ -301,6 +374,10 @@ export default function PixelEditorPanel({ frames, fps, onChange }: Props) {
   };
 
   useEffect(() => {
+    updateGhostPixels();
+  }, [frames, activeId, dottingInstance, updateGhostPixels, brushColor, brushTool]);
+
+  useEffect(() => {
     const handleKeydown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       const tagName = target?.tagName;
@@ -315,10 +392,10 @@ export default function PixelEditorPanel({ frames, fps, onChange }: Props) {
       if (key === "b") {
         event.preventDefault();
         selectDrawBlack();
-      } else if (key === "v") {
+      } else if (key === "w") {
         event.preventDefault();
         selectDrawWhite();
-      } else if (key === "x") {
+      } else if (key === "a") {
         event.preventDefault();
         addFrame();
       } else if (key === "c") {
@@ -358,7 +435,7 @@ export default function PixelEditorPanel({ frames, fps, onChange }: Props) {
             onClick={addFrame}
             disabled={!!MAX_FRAMES && frames.length >= MAX_FRAMES}
           >
-            Add frame (X)
+            Add frame (A)
           </button>
           <button className="btn btn-outline btn-sm join-item" onClick={duplicateFrame}>
             Clone (C)
@@ -389,7 +466,7 @@ export default function PixelEditorPanel({ frames, fps, onChange }: Props) {
             }`}
             onClick={selectDrawWhite}
           >
-            Draw white (V)
+            Draw white (W)
           </button>
           <button
             className={`btn btn-sm join-item ${
