@@ -167,15 +167,20 @@ const SpritePreview = ({ sprite }: { sprite: RenderedSprite | null }) => {
 export default function BadgeApp() {
   const [mode, setMode] = useState<Mode>("video");
   const [speed, setSpeed] = useState<number>(DEFAULT_SPEED);
-  const [frames, setFrames] = useState<BinaryFrame[]>([createBlankFrame()]);
+  const [frames, setFrames] = useState<BinaryFrame[]>(() => [createBlankFrame()]);
+  const framesRef = useRef<BinaryFrame[]>([]);
   const [sprite, setSprite] = useState<RenderedSprite | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fps = useMemo(() => speedToFps(speed), [speed]);
 
+  useEffect(() => {
+    framesRef.current = frames;
+  }, [frames]);
+
   const handleRender = async () => {
     try {
       setError(null);
-      const rendered = await renderFramesToSpritePNG(frames);
+      const rendered = await renderFramesToSpritePNG(framesRef.current);
       setSprite(rendered);
     } catch (err) {
       setError((err as Error).message);
@@ -189,6 +194,7 @@ export default function BadgeApp() {
   };
 
   const onFramesChange = (updated: BinaryFrame[]) => {
+    framesRef.current = updated;
     setFrames(updated);
     setSprite(null);
   };
