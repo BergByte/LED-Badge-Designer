@@ -256,7 +256,7 @@ export default function BadgeApp() {
       <main className="max-w-6xl mx-auto px-6 py-10 flex flex-col gap-8">
         <div role="tablist" className="tabs tabs-boxed w-fit bg-base-100 shadow">
           {[
-            { id: "video", label: "Video → Badge" },
+            { id: "video", label: "Video/GIF → Badge" },
             { id: "pixel", label: "Pixel Animation → Badge" }
           ].map((tab) => (
             <button
@@ -315,7 +315,7 @@ export default function BadgeApp() {
             <div className="card-body gap-2">
               <h3 className="card-title text-base">Video flow</h3>
               <ol className="list-decimal list-inside text-sm opacity-80 space-y-1">
-                <li>Upload .mp4/.mov/.webm</li>
+                <li>Upload .mp4/.mov/.webm or animated .gif</li>
                 <li>Trim within max duration and crop to 48:11</li>
                 <li>Extract frames at chosen FPS, invert/threshold, tile to sprite</li>
                 <li>Preview, then render and download the PNG</li>

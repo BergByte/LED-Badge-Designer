@@ -18,7 +18,7 @@ const clampFrames = (frames: BinaryFrame[]) =>
 
 export default function PixelEditorPanel({ frames, fps, onChange }: Props) {
   const [activeId, setActiveId] = useState(frames[0]?.id ?? "");
-  const [brushColor, setBrushColor] = useState<string>("#000000");
+  const [brushColor, setBrushColor] = useState<string>("#ffffff");
   const [dottingKey, setDottingKey] = useState(0);
   const dottingRef = useRef<DottingRef>(null);
   const framesRef = useRef<BinaryFrame[]>(frames);

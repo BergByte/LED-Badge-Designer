@@ -23,6 +23,13 @@ type VideoMeta = {
   height: number;
 };
 
+type SourceKind = "video" | "gif";
+
+type GifFrame = {
+  bitmap: ImageBitmap;
+  durationSeconds: number;
+};
+
 type Progress = {
   current: number;
   total: number;
@@ -32,8 +39,11 @@ type Progress = {
 export default function VideoPanel({ fps, onFramesChange }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const cropperVideoRef = useRef<HTMLVideoElement | null>(null);
-  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [mediaUrl, setMediaUrl] = useState<string | null>(null);
   const [meta, setMeta] = useState<VideoMeta | null>(null);
+  const [sourceKind, setSourceKind] = useState<SourceKind | null>(null);
+  const gifFramesRef = useRef<GifFrame[] | null>(null);
+  const [gifFrames, setGifFrames] = useState<GifFrame[] | null>(null);
   const [startTime, setStartTime] = useState(0);
   const [endTime, setEndTime] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -46,6 +56,121 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
   const [zoom, setZoom] = useState(1);
   const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(null);
   const cancelRef = useRef(false);
+
+  const getImageDecoder = () => {
+    if (typeof window === "undefined") return null;
+    const decoder = (window as typeof window & { ImageDecoder?: unknown }).ImageDecoder;
+    if (typeof decoder !== "function") return null;
+    return decoder as new (init: { data: BufferSource; type: string }) => {
+      tracks?: { selectedTrack?: { frameCount: number } };
+      decode: (options: { frameIndex: number }) => Promise<{ image: any }>;
+      close?: () => void;
+    };
+  };
+
+  const decodeGif = async (file: File) => {
+    const ImageDecoderCtor = getImageDecoder();
+    if (!ImageDecoderCtor) {
+      throw new Error(
+        "GIF decoding needs ImageDecoder support (Chrome/Edge 115+). Try converting to video if unsupported."
+      );
+    }
+    const buffer = await file.arrayBuffer();
+    const decoder = new ImageDecoderCtor({
+      data: new Uint8Array(buffer),
+      type: file.type || "image/gif"
+    });
+    const track = decoder.tracks?.selectedTrack;
+    if (track && "ready" in track && track.ready instanceof Promise) {
+      await track.ready;
+    }
+    const frameCount = track?.frameCount ?? 0;
+    const totalFrames = frameCount > 0 ? frameCount : 1;
+
+    const frames: GifFrame[] = [];
+    let width = 0;
+    let height = 0;
+    let totalDuration = 0;
+
+    for (let i = 0; i < totalFrames; i++) {
+      try {
+        const { image }: { image: any } = await decoder.decode({ frameIndex: i });
+        width = image.displayWidth ?? image.codedWidth ?? width;
+        height = image.displayHeight ?? image.codedHeight ?? height;
+        const bitmap = await createImageBitmap(image);
+        width = width || bitmap.width;
+        height = height || bitmap.height;
+        if (typeof image.close === "function") {
+          image.close();
+        }
+        const rawDuration = image.duration ?? 0;
+        const durationSeconds =
+          rawDuration > 0
+            ? Math.max(
+                rawDuration > 1000 ? rawDuration / 1_000_000 : rawDuration / 1000,
+                0.01
+              )
+            : 0.1;
+        totalDuration += durationSeconds;
+        frames.push({ bitmap, durationSeconds });
+      } catch (err) {
+        if (i === 0) {
+          decoder.close?.();
+          throw new Error("Unable to decode GIF frames.");
+        }
+        break;
+      }
+    }
+
+    decoder.close?.();
+    if (!frames.length) {
+      throw new Error("No frames found in the GIF.");
+    }
+    return { frames, width, height, duration: totalDuration };
+  };
+
+  const loadVideoMetadata = (file: File, url: string) =>
+    new Promise<VideoMeta>((resolve, reject) => {
+      const probe = document.createElement("video");
+      probe.preload = "metadata";
+      probe.muted = true;
+      probe.playsInline = true;
+      probe.addEventListener(
+        "loadedmetadata",
+        () => {
+          resolve({
+            name: file.name,
+            duration: probe.duration,
+            width: probe.videoWidth,
+            height: probe.videoHeight
+          });
+        },
+        { once: true }
+      );
+      probe.addEventListener(
+        "error",
+        () => {
+          reject(new Error("Unable to read video metadata"));
+        },
+        { once: true }
+      );
+      probe.src = url;
+      probe.load();
+    });
+
+  const cleanupGifFrames = (frames: GifFrame[] | null) => {
+    frames?.forEach((frame) => {
+      if (typeof frame.bitmap.close === "function") {
+        frame.bitmap.close();
+      }
+    });
+  };
+
+  const setGifFramesWithCleanup = (frames: GifFrame[] | null) => {
+    cleanupGifFrames(gifFramesRef.current);
+    gifFramesRef.current = frames;
+    setGifFrames(frames);
+  };
 
   const centerCropArea = (videoWidth: number, videoHeight: number): Area => {
     const videoAspect = videoWidth / videoHeight;
@@ -78,70 +203,74 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
     return Math.min(MAX_VIDEO_FRAMES, Math.ceil(effectiveDuration * fps));
   }, [effectiveDuration, fps]);
 
-  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
     setError(null);
     cancelRef.current = false;
 
-    const url = URL.createObjectURL(file);
-    if (videoUrl) {
-      URL.revokeObjectURL(videoUrl);
+    if (mediaUrl) {
+      URL.revokeObjectURL(mediaUrl);
     }
-    setVideoUrl(url);
+    setMeta(null);
+    setSourceKind(null);
+    setGifFramesWithCleanup(null);
 
-    const loadMetadata = () =>
-      new Promise<VideoMeta>((resolve, reject) => {
-        const probe = document.createElement("video");
-        probe.preload = "metadata";
-        probe.muted = true;
-        probe.playsInline = true;
-        probe.addEventListener(
-          "loadedmetadata",
-          () => {
-            resolve({
-              name: file.name,
-              duration: probe.duration,
-              width: probe.videoWidth,
-              height: probe.videoHeight
-            });
-          },
-          { once: true }
-        );
-        probe.addEventListener(
-          "error",
-          () => {
-            reject(new Error("Unable to read video metadata"));
-          },
-          { once: true }
-        );
-        probe.src = url;
-        probe.load();
-      });
+    const isGif =
+      file.type === "image/gif" || file.name.toLowerCase().endsWith(".gif");
 
-    loadMetadata()
-      .then((metaInfo) => {
-        const cappedDuration = Math.min(metaInfo.duration, maxTrimSpanSeconds);
-        setMeta(metaInfo);
+    const url = URL.createObjectURL(file);
+    setMediaUrl(url);
+    setSourceKind(isGif ? "gif" : "video");
+
+    try {
+      if (isGif) {
+        const decoded = await decodeGif(file);
+        const cappedDuration = Math.min(decoded.duration, maxTrimSpanSeconds);
+        setGifFramesWithCleanup(decoded.frames);
+        setMeta({
+          name: file.name,
+          duration: decoded.duration,
+          width: decoded.width,
+          height: decoded.height
+        });
         setStartTime(0);
         setEndTime(cappedDuration);
-        const defaultCrop = centerCropArea(metaInfo.width, metaInfo.height);
+        const defaultCrop = centerCropArea(decoded.width, decoded.height);
         setCroppedAreaPixels(defaultCrop);
         setCrop({ x: 0, y: 0 });
         setZoom(1);
-
+        cropperVideoRef.current = null;
         const video = videoRef.current;
         if (video) {
-          video.preload = "metadata";
-          video.muted = true;
-          video.playsInline = true;
-          video.src = url;
+          video.removeAttribute("src");
           video.load();
         }
-      })
-      .catch((e) => {
-        setError((e as Error).message);
-      });
+        return;
+      }
+
+      const metaInfo = await loadVideoMetadata(file, url);
+      const cappedDuration = Math.min(metaInfo.duration, maxTrimSpanSeconds);
+      setGifFramesWithCleanup(null);
+      setMeta(metaInfo);
+      setStartTime(0);
+      setEndTime(cappedDuration);
+      const defaultCrop = centerCropArea(metaInfo.width, metaInfo.height);
+      setCroppedAreaPixels(defaultCrop);
+      setCrop({ x: 0, y: 0 });
+      setZoom(1);
+
+      const video = videoRef.current;
+      if (video) {
+        video.preload = "metadata";
+        video.muted = true;
+        video.playsInline = true;
+        video.src = url;
+        video.load();
+      }
+    } catch (e) {
+      setError((e as Error).message);
+    }
   };
 
   const clampTimes = (
@@ -182,6 +311,7 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
   }, [endTime, maxTrimSpanSeconds, meta, startTime]);
 
   useEffect(() => {
+    if (sourceKind !== "video") return;
     const node = cropperVideoRef.current;
     if (!node) return;
 
@@ -207,7 +337,7 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
       node.removeEventListener("timeupdate", clamp);
       node.removeEventListener("seeking", clamp);
     };
-  }, [cropperVideoRef, endTime, startTime, videoUrl]);
+  }, [cropperVideoRef, endTime, mediaUrl, sourceKind, startTime]);
 
   const thresholdFrame = (imageData: ImageData): Uint8ClampedArray => {
     const { data, width, height } = imageData;
@@ -225,7 +355,12 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
   };
 
   const renderFrames = async () => {
-    if (!meta || endTime === null || !videoRef.current) return;
+    if (!meta || endTime === null) return;
+    if (sourceKind === "video" && !videoRef.current) return;
+    if (sourceKind === "gif" && (!gifFrames || gifFrames.length === 0)) {
+      setError("GIF frames are not ready yet. Re-upload and try again.");
+      return;
+    }
     if (effectiveDuration <= 0) {
       setError("Select a valid trim range.");
       return;
@@ -234,7 +369,6 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
     cancelRef.current = false;
     setProgress({ current: 0, total: estimatedFrames, status: "preparing" });
 
-    const video = videoRef.current;
     const cropArea =
       croppedAreaPixels ?? centerCropArea(meta.width, meta.height);
     const canvas = document.createElement("canvas");
@@ -249,50 +383,106 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
     const frames: BinaryFrame[] = [];
     const frameCount = estimatedFrames;
 
-    const seekTo = (time: number) =>
-      new Promise<void>((resolve, reject) => {
-        const handle = () => {
-          video.removeEventListener("seeked", handle);
-          resolve();
-        };
-        const onError = () => {
-          video.removeEventListener("error", onError);
-          reject(new Error("Seek failed"));
-        };
-        video.addEventListener("seeked", handle, { once: true });
-        video.addEventListener("error", onError, { once: true });
-        video.currentTime = Math.min(time, video.duration - 0.01);
-      });
-
     setProgress({ current: 0, total: frameCount, status: "rendering" });
-    for (let i = 0; i < frameCount; i++) {
-      if (cancelRef.current) {
-        setProgress((prev) => ({ ...prev, status: "cancelled" }));
-        return;
+    if (sourceKind === "gif" && gifFrames) {
+      const timeline = gifFrames.reduce<
+        { start: number; end: number; frame: GifFrame }[]
+      >((acc, frame) => {
+        const start = acc.length ? acc[acc.length - 1].end : 0;
+        const end = start + frame.durationSeconds;
+        acc.push({ start, end, frame });
+        return acc;
+      }, []);
+      for (let i = 0; i < frameCount; i++) {
+        if (cancelRef.current) {
+          setProgress((prev) => ({ ...prev, status: "cancelled" }));
+          return;
+        }
+        const t = startTime + i / fps;
+        const clampedTime = Math.min(t, endTime - 0.001);
+        const targetTime = Math.min(
+          clampedTime,
+          timeline[timeline.length - 1]?.end ?? clampedTime
+        );
+        let selectedFrame = timeline[timeline.length - 1]?.frame ?? null;
+        for (const entry of timeline) {
+          if (targetTime < entry.end) {
+            selectedFrame = entry.frame;
+            break;
+          }
+        }
+        if (!selectedFrame) continue;
+        ctx.drawImage(
+          selectedFrame.bitmap,
+          cropArea.x,
+          cropArea.y,
+          cropArea.width,
+          cropArea.height,
+          0,
+          0,
+          OUTPUT_WIDTH,
+          OUTPUT_HEIGHT
+        );
+        const frameData = ctx.getImageData(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
+        const binary = thresholdFrame(frameData);
+        frames.push({
+          id: crypto.randomUUID(),
+          data: binary,
+          width: OUTPUT_WIDTH,
+          height: OUTPUT_HEIGHT
+        });
+        setProgress({
+          current: i + 1,
+          total: frameCount,
+          status: "rendering"
+        });
       }
-      const t = startTime + i / fps;
-      const clampedTime = Math.min(t, endTime - 0.001);
-      await seekTo(clampedTime);
-      ctx.drawImage(
-        video,
-        cropArea.x,
-        cropArea.y,
-        cropArea.width,
-        cropArea.height,
-        0,
-        0,
-        OUTPUT_WIDTH,
-        OUTPUT_HEIGHT
-      );
-      const frameData = ctx.getImageData(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
-      const binary = thresholdFrame(frameData);
-      frames.push({
-        id: crypto.randomUUID(),
-        data: binary,
-        width: OUTPUT_WIDTH,
-        height: OUTPUT_HEIGHT
-      });
-      setProgress({ current: i + 1, total: frameCount, status: "rendering" });
+    } else if (sourceKind === "video" && videoRef.current) {
+      const video = videoRef.current;
+      const seekTo = (time: number) =>
+        new Promise<void>((resolve, reject) => {
+          const handle = () => {
+            video.removeEventListener("seeked", handle);
+            resolve();
+          };
+          const onError = () => {
+            video.removeEventListener("error", onError);
+            reject(new Error("Seek failed"));
+          };
+          video.addEventListener("seeked", handle, { once: true });
+          video.addEventListener("error", onError, { once: true });
+          video.currentTime = Math.min(time, video.duration - 0.01);
+        });
+
+      for (let i = 0; i < frameCount; i++) {
+        if (cancelRef.current) {
+          setProgress((prev) => ({ ...prev, status: "cancelled" }));
+          return;
+        }
+        const t = startTime + i / fps;
+        const clampedTime = Math.min(t, endTime - 0.001);
+        await seekTo(clampedTime);
+        ctx.drawImage(
+          video,
+          cropArea.x,
+          cropArea.y,
+          cropArea.width,
+          cropArea.height,
+          0,
+          0,
+          OUTPUT_WIDTH,
+          OUTPUT_HEIGHT
+        );
+        const frameData = ctx.getImageData(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
+        const binary = thresholdFrame(frameData);
+        frames.push({
+          id: crypto.randomUUID(),
+          data: binary,
+          width: OUTPUT_WIDTH,
+          height: OUTPUT_HEIGHT
+        });
+        setProgress({ current: i + 1, total: frameCount, status: "rendering" });
+      }
     }
 
     onFramesChange(frames.length ? frames : [createBlankFrame()]);
@@ -305,20 +495,22 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
       if (video) {
         URL.revokeObjectURL(video.src);
       }
-      if (videoUrl) {
-        URL.revokeObjectURL(videoUrl);
+      if (mediaUrl) {
+        URL.revokeObjectURL(mediaUrl);
       }
+      cleanupGifFrames(gifFramesRef.current);
     };
-  }, [videoUrl]);
+  }, [mediaUrl]);
 
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
-          <h3 className="card-title text-xl">Video → Badge</h3>
+          <h3 className="card-title text-xl">Video/GIF → Badge</h3>
           <p className="text-sm opacity-70">
-            Upload a clip, trim to a max of {MAX_VIDEO_FRAMES} frames (limit scales with
-            FPS), crop to 48:11, and render at the selected FPS (inverted binary).
+            Upload a clip or animated GIF, trim to a max of {MAX_VIDEO_FRAMES} frames
+            (limit scales with FPS), crop to 48:11, and render at the selected FPS
+            (inverted binary).
           </p>
         </div>
         <button
@@ -336,11 +528,11 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
 
       <label className="form-control w-full">
         <div className="label">
-          <span className="label-text font-semibold">Upload video</span>
+          <span className="label-text font-semibold">Upload video or GIF</span>
         </div>
         <input
           type="file"
-          accept="video/*"
+          accept="video/*,image/gif"
           onChange={handleFileChange}
           className="file-input file-input-bordered w-full"
         />
@@ -368,9 +560,10 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
 
           <div className="grid gap-4 md:grid-cols-[2fr,1fr]">
             <div className="relative h-72 w-full overflow-hidden rounded-2xl border border-base-300 bg-base-200">
-              {videoUrl ? (
+              {mediaUrl ? (
                 <Cropper
-                  video={videoUrl}
+                  video={sourceKind === "video" ? mediaUrl : undefined}
+                  image={sourceKind === "gif" ? mediaUrl : undefined}
                   crop={crop}
                   zoom={zoom}
                   aspect={OUTPUT_ASPECT}
@@ -382,14 +575,22 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
                   maxZoom={5}
                   restrictPosition
                   initialCroppedAreaPixels={initialCropArea ?? undefined}
-                  mediaProps={{ controls: true, muted: true }}
-                  setVideoRef={(ref) => {
-                    cropperVideoRef.current = ref?.current ?? null;
-                  }}
+                  mediaProps={
+                    sourceKind === "video"
+                      ? { controls: true, muted: true }
+                      : { crossOrigin: "anonymous" }
+                  }
+                  setVideoRef={
+                    sourceKind === "video"
+                      ? (ref) => {
+                          cropperVideoRef.current = ref?.current ?? null;
+                        }
+                      : undefined
+                  }
                 />
               ) : (
                 <div className="flex h-full items-center justify-center text-sm opacity-70">
-                  Upload a video to adjust crop
+                  Upload a video or GIF to adjust crop
                 </div>
               )}
             </div>
