@@ -2,7 +2,12 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { DEFAULT_SPEED, OUTPUT_HEIGHT, OUTPUT_WIDTH } from "@/config/constants";
+import {
+  BADGE_DEVICE,
+  DEFAULT_SPEED,
+  OUTPUT_HEIGHT,
+  OUTPUT_WIDTH
+} from "@/config/constants";
 import { SPEEDS, speedToFps } from "@/config/speeds";
 import { BinaryFrame, RenderedSprite } from "@/types/frames";
 import { createBlankFrame } from "@/utils/frameUtils";
@@ -164,6 +169,117 @@ const SpritePreview = ({ sprite }: { sprite: RenderedSprite | null }) => {
   );
 };
 
+const TutorialModal = ({
+  open,
+  onClose,
+  uploadCommand
+}: {
+  open: boolean;
+  onClose: () => void;
+  uploadCommand: string;
+}) => {
+  const vendorHex = BADGE_DEVICE.usbVendorId.toString(16).padStart(4, "0");
+  const productHex = BADGE_DEVICE.usbProductId.toString(16).padStart(4, "0");
+  const badgeUsbId = `${vendorHex}:${productHex}`;
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+      <div className="bg-white rounded-lg shadow-2xl max-w-4xl w-full max-h-[80vh] overflow-hidden border border-base-300">
+        <div className="flex items-start justify-between gap-4 p-5 border-b border-base-200">
+          <div>
+            <div className="text-lg font-semibold">Badge workflow tutorial</div>
+            <p className="text-sm opacity-70">
+              Convert a video or pixel animation to a sprite row, then push it to the Winbond {badgeUsbId} badge.
+            </p>
+          </div>
+          <button className="btn btn-ghost btn-sm" onClick={onClose}>
+            Close
+          </button>
+        </div>
+        <div className="p-5 space-y-6 overflow-y-auto max-h-[calc(80vh-5rem)] pr-3">
+          <section className="space-y-2">
+            <h3 className="font-semibold text-base">1) Start from a video or GIF</h3>
+            <ul className="list-disc list-inside text-sm opacity-80 space-y-1">
+              <li>Upload .mp4/.mov/.webm or animated GIF; keep clips short—sprites are capped to 80 frames.</li>
+              <li>Use the trim sliders to keep only the span you need; estimated frame count updates with the selected speed.</li>
+              <li>The crop box is locked to 48:11. Pan/zoom to choose the region that will be scaled down to 48×11.</li>
+              <li>Processing is in-browser: the app scales, converts to grayscale, thresholds (≥128 → black), and inverts for the badge.</li>
+            </ul>
+          </section>
+
+          <section className="space-y-2">
+            <h3 className="font-semibold text-base">2) Edit or draw pixel frames</h3>
+            <ul className="list-disc list-inside text-sm opacity-80 space-y-1">
+              <li>Switch to the Pixel tab to sketch at 48×11 with dot/line/rect tools.</li>
+              <li>Manage the timeline: add, duplicate, delete, and reorder frames (capped at 120).</li>
+              <li>Speed presets map to FPS (e.g., Speed 8 → 15 fps); preview updates instantly.</li>
+            </ul>
+          </section>
+
+          <section className="space-y-2">
+            <h3 className="font-semibold text-base">3) Render the sprite</h3>
+            <ul className="list-disc list-inside text-sm opacity-80 space-y-1">
+              <li>Click Render Sprite to tile frames into one horizontal row at 48×11 each.</li>
+              <li>Use Download to save the PNG (filename includes speed and FPS for later reference).</li>
+              <li>Sprite width = frame count × 48; height = 11. Preview verifies the inversion/threshold output.</li>
+            </ul>
+          </section>
+
+          <section className="space-y-2">
+            <h3 className="font-semibold text-base">4) First-time CLI setup of <a target="_blank" href="https://github.com/jnweiger/led-name-badge-ls32">github.com/jnweiger/led-name-badge-ls32</a></h3>
+            <p className="text-sm opacity-80">
+              The uploader script in <code>led-name-badge-ls32</code> expects Python 3, Pillow for PNG parsing, and USB access.<br/>
+              <b>For more information and help check out <a target="_blank" href="https://github.com/jnweiger/led-name-badge-ls32">github.com/jnweiger/led-name-badge-ls32</a></b>
+            </p>
+            <div className="rounded border border-base-300 bg-base-100 p-3 text-xs space-y-2">
+              <div className="font-semibold">Install and prepare</div>
+              <pre className="bg-base-200 rounded p-3 whitespace-pre-wrap">
+git clone https://github.com/jnweiger/led-name-badge-ls32.git<br/>
+cd led-name-badge-ls32<br/>
+sudo apt install python3-venv<br/>
+python -m venv ledtag<br/>
+source ledtag/bin/activate<br/>
+pip install pyhidapi pyusb pillow<br/>
+# this should now work:<br/>
+# python led-badge-11x44.py -m 6 -s 8 "Hello" "World!"<br/>
+              </pre>
+              <p className="opacity-80">
+                Linux users: add a udev rule so the badge is accessible without sudo.
+              </p>
+              <pre className="bg-base-200 rounded p-3 whitespace-pre-wrap">
+                sudo cp 99-led-badge-44x11.rules /etc/udev/rules.d/<br />
+                sudo udevadm control --reload-rules && sudo udevadm trigger</pre>
+              <p className="opacity-80">
+                Unplug/replug the badge after adding the rule. On macOS/Windows, plug in and let the OS finish driver setup (no rule needed).
+              </p>
+            </div>
+          </section>
+
+          <section className="space-y-2">
+            <h3 className="font-semibold text-base">5) Upload your sprite</h3>
+            <p className="text-sm opacity-80">
+              Connect the badge over USB, then point the CLI at your downloaded PNG. Use the speed set in the app so playback matches.
+            </p>
+            <pre className="bg-base-200 rounded p-3 text-xs whitespace-pre-wrap">{uploadCommand}</pre>
+            <ul className="list-disc list-inside text-sm opacity-80 space-y-1">
+              <li>Replace the placeholder path with your sprite file. Mode <code>-m 5</code> is the PNG animation mode of the badge.</li>
+              <li>If the badge is not detected, confirm the udev rule, reconnect the device, and retry the command.</li>
+              <li>Re-render at a different speed if you want faster or slower playback, then rerun the upload command.</li>
+            </ul>
+          </section>
+        </div>
+        <div className="flex justify-end gap-3 p-4 border-t border-base-200">
+          <button className="btn btn-outline btn-sm" onClick={onClose}>
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export default function BadgeApp() {
   const [mode, setMode] = useState<Mode>("video");
   const [speed, setSpeed] = useState<number>(DEFAULT_SPEED);
@@ -172,6 +288,7 @@ export default function BadgeApp() {
   const [sprite, setSprite] = useState<RenderedSprite | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showSteps, setShowSteps] = useState(false);
+  const [showTutorial, setShowTutorial] = useState(false);
   const fps = useMemo(() => speedToFps(speed), [speed]);
   const uploadCommand = useMemo(
     () => `python3 lednamebadge.py -m 5 -s ${speed} :/path/to/downloaded/sprite.png:`,
@@ -277,8 +394,8 @@ export default function BadgeApp() {
                   <pre className="whitespace-pre-wrap text-[11px] leading-5">{uploadCommand}</pre>
                 </div>
                 <div className="flex justify-end">
-                  <button className="btn btn-outline btn-sm" onClick={() => setShowSteps(true)}>
-                    How to upload
+                  <button className="btn btn-outline btn-sm" onClick={() => setShowTutorial(true)}>
+                    Help
                   </button>
                 </div>
               </div>
@@ -314,19 +431,19 @@ export default function BadgeApp() {
               <h3 className="card-title text-base">Send to badge (next)</h3>
               <div className="text-sm opacity-80 space-y-2">
                 <div>
-                  <span className="font-semibold">Designer UI repo: </span>
+                  <span className="font-semibold">Our GitHub: </span>
                   <a className="link" href="https://github.com/BergByte/LED-Badge-Designer">
                     https://github.com/BergByte/LED-Badge-Designer
                   </a>
                 </div>
-                <div>
-                  <span className="font-semibold">Upload CLI tool: </span>
+                <div> 
+                  <span className="font-semibold">LED Name Badge LS32 (CLI tool): </span>
                   <a className="link" href="https://github.com/jnweiger/led-name-badge-ls32">
                     https://github.com/jnweiger/led-name-badge-ls32
                   </a>
                 </div>
                 <div>
-                  <span className="font-semibold">Alternate firmware support: </span>
+                  <span className="font-semibold">Alternate firmware for the badge: </span>
                   <a className="link" href="https://github.com/fossasia/badgemagic-firmware">
                     https://github.com/fossasia/badgemagic-firmware
                   </a>
@@ -393,6 +510,21 @@ cd led-name-badge-ls32
           </div>
         </div>
       )}
+
+      <button
+        className="btn btn-primary btn-circle shadow-lg fixed bottom-6 right-6 z-40"
+        onClick={() => setShowTutorial(true)}
+        aria-label="Open tutorial"
+        title="Open tutorial"
+      >
+        ?
+      </button>
+
+      <TutorialModal
+        open={showTutorial}
+        onClose={() => setShowTutorial(false)}
+        uploadCommand={uploadCommand}
+      />
     </div>
   );
 }
