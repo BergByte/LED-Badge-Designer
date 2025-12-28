@@ -11,7 +11,10 @@ const font = Space_Grotesk({
 
 export const metadata: Metadata = {
   title: "48×11 LED Badge Studio",
-  description: "Client-only tool to create and send sprites to a 48×11 badge."
+  description: "Client-only tool to create and send sprites to a 48×11 badge.",
+  icons: {
+    icon: "/favicon.ico"
+  }
 };
 
 export default function RootLayout({

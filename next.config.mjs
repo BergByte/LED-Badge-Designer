@@ -1,4 +1,7 @@
-const repoName = process.env.NEXT_PUBLIC_BASE_PATH || "";
+const repoName =
+  process.env.NEXT_PUBLIC_BASE_PATH ||
+  process.env.NEXT_BASE_PATH ||
+  (process.env.NODE_ENV === "production" ? "LED-Badge-Designer" : "");
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
