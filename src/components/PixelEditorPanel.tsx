@@ -1,11 +1,18 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MAX_FRAMES, OUTPUT_HEIGHT, OUTPUT_WIDTH } from "@/config/constants";
 import { speedToFps } from "@/config/speeds";
 import { BinaryFrame } from "@/types/frames";
 import { cloneFrame, createBlankFrame } from "@/utils/frameUtils";
-import { BrushTool, Dotting, DottingRef, PixelModifyItem } from "dotting";
+import {
+  BrushTool,
+  CanvasDataChangeParams,
+  CanvasStrokeEndParams,
+  Dotting,
+  DottingRef,
+  PixelModifyItem
+} from "dotting";
 
 type Props = {
   frames: BinaryFrame[];
@@ -13,27 +20,105 @@ type Props = {
   onChange: (frames: BinaryFrame[]) => void;
 };
 
+const BLACK = "#000000";
+const WHITE = "#ffffff";
+const LAYER_ID = "frame-layer";
+
 const clampFrames = (frames: BinaryFrame[]) =>
   frames.slice(0, MAX_FRAMES || frames.length);
 
+const frameToLayerData = (frame: BinaryFrame): PixelModifyItem[][] =>
+  Array.from({ length: OUTPUT_HEIGHT }, (_, rowIndex) =>
+    Array.from({ length: OUTPUT_WIDTH }, (_, columnIndex) => {
+      const idx = rowIndex * OUTPUT_WIDTH + columnIndex;
+      const isBlack = frame.data[idx] === 0;
+      return {
+        rowIndex,
+        columnIndex,
+        color: isBlack ? BLACK : WHITE
+      };
+    })
+  );
+
+const layerDataToFrame = (data: PixelModifyItem[][], baseFrame: BinaryFrame): BinaryFrame => {
+  const next = new Uint8ClampedArray(baseFrame.width * baseFrame.height).fill(255);
+  data.forEach((row) => {
+    row.forEach((item) => {
+      if (item.rowIndex < 0 || item.rowIndex >= baseFrame.height) return;
+      if (item.columnIndex < 0 || item.columnIndex >= baseFrame.width) return;
+      const idx = item.rowIndex * baseFrame.width + item.columnIndex;
+      const color = (item.color || WHITE).toLowerCase();
+      const isBlack =
+        color === BLACK || color === "#000" || color === "rgb(0,0,0)" || color === "black";
+      next[idx] = isBlack ? 0 : 255;
+    });
+  });
+  return { ...baseFrame, data: next, width: baseFrame.width, height: baseFrame.height };
+};
+
+type FrameThumbnailProps = {
+  frame: BinaryFrame;
+  index: number;
+  isActive: boolean;
+  onSelect: () => void;
+};
+
+const FrameThumbnail = ({ frame, index, isActive, onSelect }: FrameThumbnailProps) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const image = ctx.createImageData(frame.width, frame.height);
+    for (let i = 0; i < frame.data.length; i++) {
+      const val = frame.data[i];
+      const idx = i * 4;
+      image.data[idx] = val;
+      image.data[idx + 1] = val;
+      image.data[idx + 2] = val;
+      image.data[idx + 3] = 255;
+    }
+    ctx.putImageData(image, 0, 0);
+  }, [frame]);
+
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={`flex flex-col gap-1 rounded border px-3 py-2 text-left shadow-sm transition ${
+        isActive ? "border-primary bg-primary/5" : "border-base-300 bg-base-100"
+      }`}
+    >
+      <div className="flex items-center gap-2">
+        <span className="badge badge-ghost badge-sm">Frame {index + 1}</span>
+        {isActive && <span className="badge badge-primary badge-xs">editing</span>}
+      </div>
+      <canvas
+        ref={canvasRef}
+        width={frame.width}
+        height={frame.height}
+        className="w-24 h-auto rounded border border-dashed border-base-300 bg-white"
+        style={{ imageRendering: "pixelated", aspectRatio: `${frame.width} / ${frame.height}` }}
+      />
+    </button>
+  );
+};
+
 export default function PixelEditorPanel({ frames, fps, onChange }: Props) {
   const [activeId, setActiveId] = useState(frames[0]?.id ?? "");
-  const [brushColor, setBrushColor] = useState<string>("#ffffff");
-  const [dottingKey, setDottingKey] = useState(0);
+  const [brushColor, setBrushColor] = useState<string>(WHITE);
+  const [brushTool, setBrushTool] = useState<BrushTool>(BrushTool.DOT);
   const dottingRef = useRef<DottingRef>(null);
+  const [dottingInstance, setDottingInstance] = useState<DottingRef | null>(null);
   const framesRef = useRef<BinaryFrame[]>(frames);
-  const activeFrame =
-    frames.find((frame) => frame.id === activeId) ?? frames[0] ?? createBlankFrame();
+  const activeIdRef = useRef<string>(activeId);
 
-  useEffect(() => {
-    if (!frames.find((f) => f.id === activeId) && frames.length) {
-      setActiveId(frames[0].id);
-    }
-  }, [activeId, frames]);
-
-  useEffect(() => {
-    framesRef.current = frames;
-  }, [frames]);
+  const activeFrame = useMemo(
+    () => frames.find((frame) => frame.id === activeId) ?? frames[0] ?? createBlankFrame(),
+    [activeId, frames]
+  );
 
   const frameDuration = useMemo(() => {
     const currentFps = fps || speedToFps(8);
@@ -41,158 +126,197 @@ export default function PixelEditorPanel({ frames, fps, onChange }: Props) {
   }, [frames.length, fps]);
 
   useEffect(() => {
-    setDottingKey((prev) => prev + 1);
-  }, [activeFrame]);
-  const normalizeColor = (color: string) => {
-    const clean = color.trim().toLowerCase();
-    if (clean === "#000" || clean === "#000000" || clean === "black" || clean === "rgb(0,0,0)") {
-      return "#000000";
-    }
-    return "#ffffff";
-  };
+    activeIdRef.current = activeId;
+  }, [activeId]);
 
-  const frameToLayerData = (frame: BinaryFrame): PixelModifyItem[][] => {
-    const rows: PixelModifyItem[][] = [];
-    for (let rowIndex = 0; rowIndex < OUTPUT_HEIGHT; rowIndex++) {
-      const row: PixelModifyItem[] = [];
-      for (let columnIndex = 0; columnIndex < OUTPUT_WIDTH; columnIndex++) {
-        const idx = rowIndex * OUTPUT_WIDTH + columnIndex;
-        const isBlack = frame.data[idx] === 0;
-        row.push({
-          rowIndex,
-          columnIndex,
-          color: isBlack ? "#000000" : "#ffffff"
-        });
+  useEffect(() => {
+    framesRef.current = frames;
+    if (!frames.length) {
+      const blank = createBlankFrame();
+      framesRef.current = [blank];
+      onChange([blank]);
+      setActiveId(blank.id);
+    } else if (!frames.find((frame) => frame.id === activeId)) {
+      setActiveId(frames[0].id);
+    }
+  }, [activeId, frames, onChange]);
+
+  const handleDottingRef = useCallback((instance: DottingRef | null) => {
+    dottingRef.current = instance;
+    setDottingInstance(instance);
+  }, []);
+
+  const syncFrameToCanvas = useCallback(
+    (frame: BinaryFrame | null) => {
+      const instance = dottingRef.current;
+      if (!instance || !frame) return;
+      if (!(instance as any).interactionLayer) {
+        requestAnimationFrame(() => syncFrameToCanvas(frame));
+        return;
       }
-      rows.push(row);
-    }
-    return rows;
-  };
+      instance.setLayers([{ id: LAYER_ID, data: frameToLayerData(frame) }]);
+      instance.setCurrentLayer?.(LAYER_ID);
+      instance.changeBrushColor(brushColor);
+      instance.changeBrushTool(brushTool);
+    },
+    [brushColor, brushTool]
+  );
 
-  const layerDataToFrame = (
-    data: PixelModifyItem[][],
-    baseFrame: BinaryFrame
-  ): BinaryFrame => {
-    const next = new Uint8ClampedArray(baseFrame.data.length).fill(255);
-    data.forEach((row) => {
-      row.forEach((item) => {
-        if (
-          item.rowIndex >= 0 &&
-          item.rowIndex < OUTPUT_HEIGHT &&
-          item.columnIndex >= 0 &&
-          item.columnIndex < OUTPUT_WIDTH
-        ) {
-          const idx = item.rowIndex * OUTPUT_WIDTH + item.columnIndex;
-          const color = normalizeColor(item.color);
-          next[idx] = color === "#000000" ? 0 : 255;
-        }
-      });
-    });
-    return { ...baseFrame, data: next, width: OUTPUT_WIDTH, height: OUTPUT_HEIGHT };
-  };
+  useEffect(() => {
+    syncFrameToCanvas(activeFrame);
+  }, [activeFrame, dottingInstance, syncFrameToCanvas]);
 
-  const activeLayerData = useMemo(() => frameToLayerData(activeFrame), [activeFrame]);
+  useEffect(() => {
+    const instance = dottingRef.current;
+    if (!instance) return;
+    instance.changeBrushColor(brushColor);
+    instance.changeBrushTool(brushTool);
+  }, [brushColor, brushTool, dottingInstance]);
+
+  const pushCanvasToFrames = useCallback(() => {
+    const instance = dottingRef.current;
+    if (!instance) return;
+    const layers = instance.getLayersAsArray?.();
+    const layer = layers?.find((item) => item.id === LAYER_ID) ?? layers?.[0];
+    if (!layer) return;
+    const currentFrames = framesRef.current;
+    const currentActive = currentFrames.find((frame) => frame.id === activeIdRef.current);
+    if (!currentActive) return;
+    const nextFrame = layerDataToFrame(layer.data, currentActive);
+    const nextFrames = currentFrames.map((frame) =>
+      frame.id === currentActive.id ? nextFrame : frame
+    );
+    framesRef.current = nextFrames;
+    onChange(nextFrames);
+  }, [onChange]);
+
+  const handleDataChange = useCallback(
+    (params: CanvasDataChangeParams) => {
+      if (!params.isLocalChange) return;
+      pushCanvasToFrames();
+    },
+    [pushCanvasToFrames]
+  );
+
+  const handleStrokeEnd = useCallback(
+    (_params: CanvasStrokeEndParams) => {
+      pushCanvasToFrames();
+    },
+    [pushCanvasToFrames]
+  );
+
+  useEffect(() => {
+    if (!dottingInstance) return;
+    dottingInstance.addDataChangeListener(handleDataChange);
+    dottingInstance.addStrokeEndListener(handleStrokeEnd);
+    return () => {
+      try {
+        dottingInstance.removeDataChangeListener(handleDataChange);
+      } catch {}
+      try {
+        dottingInstance.removeStrokeEndListener(handleStrokeEnd);
+      } catch {}
+    };
+  }, [dottingInstance, handleDataChange, handleStrokeEnd]);
+
+  const updateFrames = useCallback(
+    (updater: (current: BinaryFrame[]) => BinaryFrame[], preferredActiveId?: string) => {
+      const next = clampFrames(updater(framesRef.current));
+      framesRef.current = next;
+      onChange(next);
+
+      let targetActiveId = preferredActiveId;
+      if (targetActiveId && !next.some((frame) => frame.id === targetActiveId)) {
+        targetActiveId = undefined;
+      }
+      if (!targetActiveId && next.some((frame) => frame.id === activeIdRef.current)) {
+        targetActiveId = activeIdRef.current;
+      }
+      if (!targetActiveId && next.length) {
+        targetActiveId = next[0].id;
+      }
+
+      if (targetActiveId && targetActiveId !== activeIdRef.current) {
+        setActiveId(targetActiveId);
+        activeIdRef.current = targetActiveId;
+      }
+
+      const freshActive = targetActiveId
+        ? next.find((frame) => frame.id === targetActiveId)
+        : null;
+      if (freshActive) {
+        syncFrameToCanvas(freshActive);
+      }
+    },
+    [onChange, syncFrameToCanvas]
+  );
 
   const addFrame = () => {
-    if (MAX_FRAMES && frames.length >= MAX_FRAMES) return;
-    onChange(clampFrames([...frames, createBlankFrame()]));
+    const newFrame = createBlankFrame();
+    updateFrames((current) => {
+      if (MAX_FRAMES && current.length >= MAX_FRAMES) return current;
+      return [...current, newFrame];
+    }, newFrame.id);
   };
 
   const duplicateFrame = () => {
-    if (!activeFrame) return;
-    if (MAX_FRAMES && frames.length >= MAX_FRAMES) return;
-    onChange(clampFrames([...frames, cloneFrame(activeFrame)]));
+    const current = framesRef.current.find((frame) => frame.id === activeIdRef.current);
+    if (!current) return;
+    const newFrame = cloneFrame(current);
+    updateFrames((existing) => {
+      if (MAX_FRAMES && existing.length >= MAX_FRAMES) return existing;
+      return [...existing, newFrame];
+    }, newFrame.id);
   };
 
-  useEffect(() => {
-    if (!dottingRef.current) return;
-    dottingRef.current.changeBrushTool(BrushTool.DOT);
-    dottingRef.current.changeBrushColor(brushColor);
-  }, [brushColor]);
-
   const deleteFrame = () => {
-    if (frames.length <= 1) return;
-    const next = frames.filter((frame) => frame.id !== activeId);
-    onChange(next);
-    setActiveId(next[0].id);
+    updateFrames((current) => {
+      if (current.length <= 1) return current;
+      const filtered = current.filter((frame) => frame.id !== activeIdRef.current);
+      return filtered.length ? filtered : [createBlankFrame()];
+    });
   };
 
   const moveFrame = (direction: -1 | 1) => {
-    const index = frames.findIndex((frame) => frame.id === activeId);
-    if (index === -1) return;
-    const target = index + direction;
-    if (target < 0 || target >= frames.length) return;
-    const next = [...frames];
-    const [removed] = next.splice(index, 1);
-    next.splice(target, 0, removed);
-    onChange(next);
+    updateFrames((current) => {
+      const index = current.findIndex((frame) => frame.id === activeIdRef.current);
+      if (index === -1) return current;
+      const target = index + direction;
+      if (target < 0 || target >= current.length) return current;
+      const next = [...current];
+      const [removed] = next.splice(index, 1);
+      next.splice(target, 0, removed);
+      return next;
+    });
   };
 
-  const clearFrame = () => {
-    if (!activeFrame) return;
-    onChange(
-      frames.map((frame) =>
-        frame.id === activeId
-          ? { ...frame, data: new Uint8ClampedArray(frame.data.length) }
+  const fillFrame = (value: 0 | 255) => {
+    updateFrames((current) =>
+      current.map((frame) =>
+        frame.id === activeIdRef.current
+          ? { ...frame, data: new Uint8ClampedArray(frame.data.length).fill(value) }
           : frame
       )
     );
   };
 
-  const fillFrame = (value: 0 | 255) => {
-    if (!activeFrame) return;
-    const filled = new Uint8ClampedArray(activeFrame.data.length).fill(value);
-    onChange(
-      frames.map((frame) =>
-        frame.id === activeId ? { ...frame, data: filled } : frame
-      )
-    );
-  };
-
-  useEffect(() => {
-    const ref = dottingRef.current;
-    if (!ref || !activeFrame || !ref.addDataChangeListener) return;
-    const instance = ref;
-
-    const pushFrameUpdate = () => {
-      const layers = ref.getLayersAsArray?.();
-      const layer = layers?.[0];
-      if (!layer) return;
-      const currentFrames = framesRef.current;
-      const baseFrame =
-        currentFrames.find((frame) => frame.id === activeFrame.id) ?? activeFrame;
-      const nextFrame = layerDataToFrame(layer.data, baseFrame);
-      const nextFrames = currentFrames.map((frame) =>
-        frame.id === activeFrame.id ? nextFrame : frame
-      );
-      onChange(nextFrames);
-    };
-
-    instance.addDataChangeListener?.(pushFrameUpdate);
-    instance.addStrokeEndListener?.(pushFrameUpdate);
-    return () => {
-    try {
-           instance?.removeDataChangeListener?.(pushFrameUpdate);
-          } catch {
-            // ignore teardown errors when dotting has already disposed internals
-          }
-          try {
-            instance?.removeStrokeEndListener?.(pushFrameUpdate);
-          } catch {
-           // ignore teardown errors when dotting has already disposed internals
-         }
-      };
-
-  }, [activeFrame, onChange]);
-
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div className="space-y-1">
-          <h3 className="text-lg font-semibold">Pixel Animation Editor</h3>
-          <p className="text-sm opacity-70">
-            48×11 grid with timeline controls. Frames: {frames.length} · Duration:{" "}
-            {frameDuration.toFixed(2)}s @ {fps} fps
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="space-y-2">
+          <div className="flex flex-wrap gap-2 text-xs font-semibold uppercase tracking-wide">
+            <span className="badge badge-primary badge-sm">Pixel</span>
+            <span className="badge badge-outline badge-sm">48×11 grid</span>
+            <span className="badge badge-ghost badge-sm">
+              {frames.length} frame{frames.length === 1 ? "" : "s"} ·{" "}
+              {frameDuration.toFixed(2)}s @ {fps} fps
+            </span>
+          </div>
+          <h3 className="text-xl font-bold">Pixel Animation Composer</h3>
+          <p className="text-sm opacity-80">
+            Draw directly on the badge grid and manage each frame in the strip below. The
+            editor listens to Dotting events so brush strokes instantly update the active
+            frame.
           </p>
         </div>
         <div className="join">
@@ -201,7 +325,7 @@ export default function PixelEditorPanel({ frames, fps, onChange }: Props) {
             onClick={addFrame}
             disabled={!!MAX_FRAMES && frames.length >= MAX_FRAMES}
           >
-            Add
+            Add frame
           </button>
           <button className="btn btn-outline btn-sm join-item" onClick={duplicateFrame}>
             Duplicate
@@ -216,90 +340,116 @@ export default function PixelEditorPanel({ frames, fps, onChange }: Props) {
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-2 text-sm">
-        <button className="btn btn-outline btn-sm" onClick={() => moveFrame(-1)}>
-          Move ←
-        </button>
-        <button className="btn btn-outline btn-sm" onClick={() => moveFrame(1)}>
-          Move →
-        </button>
-        <button className="btn btn-outline btn-sm" onClick={clearFrame}>
-          Clear
-        </button>
-        <button className="btn btn-outline btn-sm" onClick={() => fillFrame(0)}>
-          Fill black
-        </button>
-        <button className="btn btn-outline btn-sm" onClick={() => fillFrame(255)}>
-          Fill white
-        </button>
+      <div className="flex flex-wrap items-center gap-2 text-sm">
         <div className="join">
           <button
-            className={`btn btn-sm join-item ${brushColor === "#000000" ? "btn-primary" : "btn-outline"}`}
-            onClick={() => setBrushColor("#000000")}
+            className={`btn btn-sm join-item ${
+              brushTool === BrushTool.DOT && brushColor === BLACK ? "btn-primary" : "btn-outline"
+            }`}
+            onClick={() => {
+              setBrushTool(BrushTool.DOT);
+              setBrushColor(BLACK);
+            }}
           >
-            Brush: Black
+            Draw black
           </button>
           <button
-            className={`btn btn-sm join-item ${brushColor === "#ffffff" ? "btn-primary" : "btn-outline"}`}
-            onClick={() => setBrushColor("#ffffff")}
+            className={`btn btn-sm join-item ${
+              brushTool === BrushTool.DOT && brushColor === WHITE ? "btn-primary" : "btn-outline"
+            }`}
+            onClick={() => {
+              setBrushTool(BrushTool.DOT);
+              setBrushColor(WHITE);
+            }}
           >
-            Brush: White
+            Draw white
+          </button>
+          <button
+            className={`btn btn-sm join-item ${
+              brushTool === BrushTool.PAINT_BUCKET ? "btn-primary" : "btn-outline"
+            }`}
+            onClick={() => {
+              setBrushTool(BrushTool.PAINT_BUCKET);
+            }}
+          >
+            Paint bucket
+          </button>
+        </div>
+        <div className="join">
+          <button className="btn btn-outline btn-sm join-item" onClick={() => moveFrame(-1)}>
+            Move ←
+          </button>
+          <button className="btn btn-outline btn-sm join-item" onClick={() => moveFrame(1)}>
+            Move →
+          </button>
+        </div>
+        <div className="join">
+          <button className="btn btn-outline btn-sm join-item" onClick={() => fillFrame(0)}>
+            Fill black
+          </button>
+          <button className="btn btn-outline btn-sm join-item" onClick={() => fillFrame(255)}>
+            Fill white
           </button>
         </div>
       </div>
 
-      <div className="rounded-lg border border-base-300 bg-base-200/60 p-3 overflow-auto">
+      <div className="rounded-lg border border-base-300 bg-base-200/60 overflow-hidden">
         {activeFrame ? (
-          <Dotting
-            key={dottingKey}
-            ref={dottingRef}
-            width="100%"
-            height={360}
-            style={{ minHeight: 260 }}
-            initLayers={[
-              {
-                id: "layer-1",
-                data: activeLayerData
-              }
-            ]}
-            isGridFixed
-            minRowCount={OUTPUT_HEIGHT}
-            maxRowCount={OUTPUT_HEIGHT}
-            minColumnCount={OUTPUT_WIDTH}
-            maxColumnCount={OUTPUT_WIDTH}
-            gridSquareLength={16}
-            backgroundColor="#ffffff"
-            defaultPixelColor="#ffffff"
-            brushTool={BrushTool.DOT}
-            brushColor={brushColor}
-            isPanZoomable
-            isGridVisible
-            isInteractionApplicable
-            isDrawingEnabled
-            initAutoScale
-          />
+          <div
+            className="relative w-full"
+            style={{ aspectRatio: `${OUTPUT_WIDTH} / ${OUTPUT_HEIGHT}` }}
+          >
+            <Dotting
+              key={activeFrame.id}
+              ref={handleDottingRef}
+              width="100%"
+              height="100%"
+              style={{ width: "100%", height: "100%" }}
+              initLayers={[
+                {
+                  id: LAYER_ID,
+                  data: frameToLayerData(activeFrame)
+                }
+              ]}
+              isGridFixed
+              minRowCount={OUTPUT_HEIGHT}
+              maxRowCount={OUTPUT_HEIGHT}
+              minColumnCount={OUTPUT_WIDTH}
+              maxColumnCount={OUTPUT_WIDTH}
+              gridSquareLength={18}
+              backgroundColor="#ffffff"
+              defaultPixelColor="#ffffff"
+              brushTool={brushTool}
+              brushColor={brushColor}
+              isPanZoomable
+              isGridVisible
+              isInteractionApplicable
+              isDrawingEnabled
+              initAutoScale
+            />
+          </div>
         ) : (
           <div className="alert alert-info">No frame selected.</div>
         )}
       </div>
 
-      <div className="flex gap-2 overflow-auto pb-1">
-        {frames.map((frame, index) => (
-          <button
-            key={frame.id}
-            onClick={() => setActiveId(frame.id)}
-            className={`btn btn-xs ${
-              frame.id === activeId ? "btn-primary" : "btn-outline"
-            }`}
-          >
-            Frame {index + 1}
-          </button>
-        ))}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <h4 className="text-sm font-semibold">Frame strip</h4>
+          <span className="text-xs opacity-70">Max {MAX_FRAMES} frames</span>
+        </div>
+        <div className="flex gap-3 overflow-x-auto pb-2">
+          {frames.map((frame, index) => (
+            <FrameThumbnail
+              key={frame.id}
+              frame={frame}
+              index={index}
+              isActive={frame.id === activeId}
+              onSelect={() => setActiveId(frame.id)}
+            />
+          ))}
+        </div>
       </div>
-      <p className="text-xs opacity-70">
-        Timeline caps at {MAX_FRAMES} frames (configurable). Add, duplicate, reorder, and
-        clear frames before rendering/exporting.
-      </p>
     </div>
   );
 }
