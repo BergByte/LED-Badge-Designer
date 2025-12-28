@@ -171,7 +171,12 @@ export default function BadgeApp() {
   const framesRef = useRef<BinaryFrame[]>([]);
   const [sprite, setSprite] = useState<RenderedSprite | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showSteps, setShowSteps] = useState(false);
   const fps = useMemo(() => speedToFps(speed), [speed]);
+  const uploadCommand = useMemo(
+    () => `python3 lednamebadge.py -m 5 -s ${speed} :/foo/bar.png:`,
+    [speed]
+  );
 
   useEffect(() => {
     framesRef.current = frames;
@@ -204,57 +209,13 @@ export default function BadgeApp() {
       <header className="bg-gradient-to-r from-primary/20 via-base-200 to-secondary/10">
         <div className="max-w-6xl mx-auto px-6 py-10 flex flex-col gap-6">
           <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6">
-            <div className="space-y-3">
-              <div className="flex flex-wrap gap-2 text-xs font-semibold uppercase tracking-wide">
-                <span className="badge badge-primary badge-lg">Client-only</span>
-                <span className="badge badge-neutral badge-lg">48×11 badge</span>
-                <span className="badge badge-outline badge-lg">Static export</span>
-              </div>
-              <div>
-                <p className="badge badge-info badge-outline">Video & Pixel → Sprite</p>
-                <h1 className="text-4xl font-bold mt-2">48×11 LED Badge Studio</h1>
-                <p className="text-sm opacity-80 max-w-3xl leading-6 mt-2">
-                  Trim or draw, lock to 48:11, invert to monochrome, preview at exact FPS,
-                  and export a single-row sprite ready for the Winbond 0416:5020 badge
-                  (WebHID/WebUSB planned).
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-2 text-xs opacity-80">
-                <span className="badge badge-outline">Aspect 48:11 · Output PNG</span>
-                <span className="badge badge-outline">Threshold ≥128 → 0</span>
-              </div>
+            <div className="space-y-2">
+              <h1 className="text-4xl font-bold">48×11 LED Badge Studio</h1>
+              <p className="text-sm opacity-80 max-w-3xl leading-6">
+                Trim or draw a 48×11 animation, preview it at badge playback speed, and export a single-row sprite PNG ready for the Winbond 0416:5020 badge.
+              </p>
             </div>
             <SpeedSelector value={speed} onChange={setSpeed} />
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
-            <div className="card bg-base-100 shadow-sm border border-base-300">
-              <div className="card-body gap-2">
-                <div className="card-title text-base">Status</div>
-                <p className="opacity-80">
-                  Video trim + crop and pixel editor both render binary frames; sprite
-                  export is live. Device transport is queued next.
-                </p>
-              </div>
-            </div>
-            <div className="card bg-base-100 shadow-sm border border-base-300">
-              <div className="card-body gap-2">
-                <div className="card-title text-base">Preview fidelity</div>
-                <p className="opacity-80">
-                  Renders at 48×11 with inverted binary threshold and your selected FPS to
-                  mirror badge playback.
-                </p>
-              </div>
-            </div>
-            <div className="card bg-base-100 shadow-sm border border-base-300">
-              <div className="card-body gap-2">
-                <div className="card-title text-base">Deployment</div>
-                <p className="opacity-80">
-                  Configured for static export with basePath/assetPrefix so GitHub Pages can
-                  host everything without a backend.
-                </p>
-              </div>
-            </div>
           </div>
         </div>
       </header>
@@ -311,6 +272,17 @@ export default function BadgeApp() {
                   </div>
                 )}
                 <SpritePreview sprite={sprite} />
+                <div className="bg-white border border-base-300 rounded p-3 text-xs space-y-1">
+                  <div className="font-semibold">Upload command (uses selected speed)</div>
+                  <pre className="whitespace-pre-wrap text-[11px] leading-5">
+{uploadCommand}
+                  </pre>
+                </div>
+                <div className="flex justify-end">
+                  <button className="btn btn-outline btn-sm" onClick={() => setShowSteps(true)}>
+                    How to upload
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -342,20 +314,81 @@ export default function BadgeApp() {
           <div className="card bg-base-100 shadow-sm border border-base-300">
             <div className="card-body gap-2">
               <h3 className="card-title text-base">Send to badge (next)</h3>
-              <p className="text-sm opacity-80">
-                WebHID/WebUSB transport with frame bit-packing and speed metadata will land
-                once the device protocol is confirmed. The connect/send controls will appear
-                below the preview panel.
-              </p>
+              <div className="text-sm opacity-80 space-y-2">
+                <div>
+                  <span className="font-semibold">Designer UI repo: </span>
+                  <a className="link" href="https://github.com/BergByte/LED-Badge-Designer">
+                    https://github.com/BergByte/LED-Badge-Designer
+                  </a>
+                </div>
+                <div>
+                  <span className="font-semibold">Upload CLI tool: </span>
+                  <a className="link" href="https://github.com/jnweiger/led-name-badge-ls32">
+                    https://github.com/jnweiger/led-name-badge-ls32
+                  </a>
+                </div>
+                <div>
+                  <span className="font-semibold">Alternate firmware support: </span>
+                  <a className="link" href="https://github.com/fossasia/badgemagic-firmware">
+                    https://github.com/fossasia/badgemagic-firmware
+                  </a>
+                </div>
+              </div>
             </div>
           </div>
         </section>
 
         <footer className="text-xs opacity-70 pb-8">
-          Runs locally in your browser. Best in Chromium-based browsers with WebHID/WebUSB
-          support. Static export ready for GitHub Pages.
         </footer>
       </main>
+
+      {showSteps && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-xl w-full p-5 space-y-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="font-semibold">Use the downloaded sprite with the CLI uploader</div>
+                <p className="text-sm opacity-80">
+                  These steps clone the badge uploader, place you in the project directory, and send your exported sprite to the badge.
+                </p>
+              </div>
+              <button className="btn btn-ghost btn-sm" onClick={() => setShowSteps(false)}>
+                Close
+              </button>
+            </div>
+            <div className="space-y-3 text-sm">
+              <div>
+                <div className="font-semibold">1) Clone the uploader repo</div>
+                <p className="opacity-80">Download the LED badge command-line tools and scripts.</p>
+                <pre className="bg-base-200 text-xs rounded p-3 overflow-x-auto">
+git clone https://github.com/jnweiger/led-name-badge-ls32.git
+                </pre>
+              </div>
+              <div>
+                <div className="font-semibold">2) Enter the project folder</div>
+                <p className="opacity-80">Switch into the cloned directory so the CLI can find its assets.</p>
+                <pre className="bg-base-200 text-xs rounded p-3 overflow-x-auto">
+cd led-name-badge-ls32
+                </pre>
+              </div>
+              <div>
+                <div className="font-semibold">3) Upload your sprite</div>
+                <p className="opacity-80">
+                  Point the uploader at the PNG you downloaded here, set mode 5, and send it to the badge at your selected speed.
+                </p>
+                <pre className="bg-base-200 text-xs rounded p-3 overflow-x-auto">
+{uploadCommand}
+                </pre>
+              </div>
+            </div>
+            <div className="flex justify-end">
+              <button className="btn btn-primary btn-sm" onClick={() => setShowSteps(false)}>
+                Got it
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
