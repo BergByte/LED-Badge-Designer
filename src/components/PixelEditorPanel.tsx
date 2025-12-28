@@ -290,16 +290,6 @@ export default function PixelEditorPanel({ frames, fps, onChange }: Props) {
     });
   };
 
-  const fillFrame = (value: 0 | 255) => {
-    updateFrames((current) =>
-      current.map((frame) =>
-        frame.id === activeIdRef.current
-          ? { ...frame, data: new Uint8ClampedArray(frame.data.length).fill(value) }
-          : frame
-      )
-    );
-  };
-
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -381,14 +371,6 @@ export default function PixelEditorPanel({ frames, fps, onChange }: Props) {
           </button>
           <button className="btn btn-outline btn-sm join-item" onClick={() => moveFrame(1)}>
             Move →
-          </button>
-        </div>
-        <div className="join">
-          <button className="btn btn-outline btn-sm join-item" onClick={() => fillFrame(0)}>
-            Fill black
-          </button>
-          <button className="btn btn-outline btn-sm join-item" onClick={() => fillFrame(255)}>
-            Fill white
           </button>
         </div>
       </div>

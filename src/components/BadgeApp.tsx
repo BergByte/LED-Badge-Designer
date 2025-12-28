@@ -174,7 +174,7 @@ export default function BadgeApp() {
   const [showSteps, setShowSteps] = useState(false);
   const fps = useMemo(() => speedToFps(speed), [speed]);
   const uploadCommand = useMemo(
-    () => `python3 lednamebadge.py -m 5 -s ${speed} :/foo/bar.png:`,
+    () => `python3 lednamebadge.py -m 5 -s ${speed} :/path/to/downloaded/sprite.png:`,
     [speed]
   );
 
@@ -274,9 +274,7 @@ export default function BadgeApp() {
                 <SpritePreview sprite={sprite} />
                 <div className="bg-white border border-base-300 rounded p-3 text-xs space-y-1">
                   <div className="font-semibold">Upload command (uses selected speed)</div>
-                  <pre className="whitespace-pre-wrap text-[11px] leading-5">
-{uploadCommand}
-                  </pre>
+                  <pre className="whitespace-pre-wrap text-[11px] leading-5">{uploadCommand}</pre>
                 </div>
                 <div className="flex justify-end">
                   <button className="btn btn-outline btn-sm" onClick={() => setShowSteps(true)}>
@@ -339,6 +337,14 @@ export default function BadgeApp() {
         </section>
 
         <footer className="text-xs opacity-70 pb-8">
+          <div className="max-w-6xl mx-auto flex flex-col gap-2">
+            <span>Runs fully in your browser—media and sprites stay on-device.</span>
+            <span>
+              Best in Chromium-based browsers for WebUSB/WebHID; Safari/Firefox may not expose
+              badge connectivity.
+            </span>
+            <span>Targeted for Winbond 0416:5020 48×11 badges, sprite export only.</span>
+          </div>
         </footer>
       </main>
 
@@ -376,9 +382,7 @@ cd led-name-badge-ls32
                 <p className="opacity-80">
                   Point the uploader at the PNG you downloaded here, set mode 5, and send it to the badge at your selected speed.
                 </p>
-                <pre className="bg-base-200 text-xs rounded p-3 overflow-x-auto">
-{uploadCommand}
-                </pre>
+                <pre className="bg-base-200 text-xs rounded p-3 overflow-x-auto">{uploadCommand}</pre>
               </div>
             </div>
             <div className="flex justify-end">

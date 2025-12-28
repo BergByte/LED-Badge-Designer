@@ -894,15 +894,13 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
       )}
 
       {warning && (
-        <div className="alert alert-warning">
-          <span>{warning}</span>
-        </div>
+      <div className="alert alert-warning">
+        <span>{warning}</span>
+      </div>
       )}
 
-      <div className="alert alert-success">
-        ffmpeg.wasm worker integration is planned; current implementation uses canvas-based
-        frame sampling with the required crop/threshold/invert to mirror the final badge
-        output until the wasm pipeline is wired.
+      <div className="alert alert-info text-sm leading-5">
+        Processing and thresholding stay in your browser via canvas; uploads are trimmed to a maximum of {MAX_VIDEO_FRAMES} frames and never leave the page.
       </div>
 
       <video ref={videoRef} className="hidden" preload="metadata" />

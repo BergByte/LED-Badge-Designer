@@ -5,7 +5,7 @@ export const createBlankFrame = (): BinaryFrame => ({
   id: crypto.randomUUID(),
   width: OUTPUT_WIDTH,
   height: OUTPUT_HEIGHT,
-  data: new Uint8ClampedArray(OUTPUT_WIDTH * OUTPUT_HEIGHT)
+  data: new Uint8ClampedArray(OUTPUT_WIDTH * OUTPUT_HEIGHT).fill(0)
 });
 
 export const cloneFrame = (frame: BinaryFrame): BinaryFrame => ({
