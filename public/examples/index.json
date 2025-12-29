@@ -1,0 +1,22 @@
+[
+  {
+    "id": "hypnotic",
+    "ini": "examples/hypnotic/metadata.ini",
+    "frames": "examples/hypnotic/frames.json"
+  },
+  {
+    "id": "scanner",
+    "ini": "examples/scanner/metadata.ini",
+    "frames": "examples/scanner/frames.json"
+  },
+  {
+    "id": "wave",
+    "ini": "examples/wave/metadata.ini",
+    "frames": "examples/wave/frames.json"
+  },
+  {
+    "id": "sparkle",
+    "ini": "examples/sparkle/metadata.ini",
+    "frames": "examples/sparkle/frames.json"
+  }
+]

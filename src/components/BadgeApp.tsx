@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   BADGE_DEVICE,
   DEFAULT_SPEED,
@@ -10,7 +10,16 @@ import {
 } from "@/config/constants";
 import { SPEEDS, speedToFps } from "@/config/speeds";
 import { BinaryFrame, RenderedSprite } from "@/types/frames";
-import { createBlankFrame } from "@/utils/frameUtils";
+import { cloneFrame, createBlankFrame } from "@/utils/frameUtils";
+import { downloadFrameFile, readFrameFile } from "@/utils/frameFile";
+import { ExampleAnimation, loadExamplesFromPublic } from "@/utils/exampleLoader";
+import {
+  hydrateFrames,
+  loadAppState,
+  PersistedVideoState,
+  saveAppState,
+  serializeFrames
+} from "@/utils/persistence";
 import { renderFramesToSpritePNG } from "@/utils/spriteRenderer";
 import PixelEditorPanel from "./PixelEditorPanel";
 import VideoPanel from "./VideoPanel";
@@ -287,6 +296,12 @@ export default function BadgeApp() {
   const [speed, setSpeed] = useState<number>(DEFAULT_SPEED);
   const [frames, setFrames] = useState<BinaryFrame[]>(() => [createBlankFrame()]);
   const framesRef = useRef<BinaryFrame[]>([]);
+  const [examples, setExamples] = useState<ExampleAnimation[]>([]);
+  const [examplesError, setExamplesError] = useState<string | null>(null);
+  const [hydratedFromStorage, setHydratedFromStorage] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [videoState, setVideoState] = useState<PersistedVideoState | null>(null);
+  const videoStateRef = useRef<PersistedVideoState | null>(null);
   const [sprite, setSprite] = useState<RenderedSprite | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showSteps, setShowSteps] = useState(false);
@@ -300,6 +315,76 @@ export default function BadgeApp() {
   useEffect(() => {
     framesRef.current = frames;
   }, [frames]);
+
+  useEffect(() => {
+    videoStateRef.current = videoState;
+  }, [videoState]);
+
+  useEffect(() => {
+    const stored = loadAppState();
+    if (stored) {
+      if (stored.mode === "video" || stored.mode === "pixel") {
+        setMode(stored.mode);
+      }
+      if (typeof stored.speed === "number" && Number.isFinite(stored.speed)) {
+        setSpeed(stored.speed);
+      }
+      const hydrated = hydrateFrames(stored.frames);
+      if (hydrated.length) {
+        framesRef.current = hydrated;
+        setFrames(hydrated);
+      }
+      if (stored.video) {
+        setVideoState(stored.video);
+      }
+    }
+    setHydratedFromStorage(true);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadExamples = async () => {
+      const loaded = await loadExamplesFromPublic();
+      if (cancelled) return;
+      setExamples(loaded);
+      if (!loaded.length) {
+        setExamplesError("No examples available.");
+      } else {
+        setExamplesError(null);
+      }
+    };
+    loadExamples();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!hydratedFromStorage) return;
+    if (framesRef.current.length) return;
+    if (!examples.length) return;
+    const first = examples[0];
+    const exampleFrames = first.frames.map((frame) => cloneFrame(frame));
+    framesRef.current = exampleFrames;
+    setFrames(exampleFrames);
+    setMode("pixel");
+    if (typeof first.speed === "number") {
+      setSpeed(first.speed);
+    }
+  }, [examples, hydratedFromStorage]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handle = window.setTimeout(() => {
+      saveAppState({
+        mode,
+        speed,
+        frames: serializeFrames(frames),
+        video: videoStateRef.current
+      });
+    }, 300);
+    return () => window.clearTimeout(handle);
+  }, [frames, mode, speed, videoState]);
 
   const handleRender = async () => {
     try {
@@ -315,6 +400,55 @@ export default function BadgeApp() {
     if (sprite) {
       downloadSprite(sprite, speed, fps);
     }
+  };
+
+  const handleSaveFramesToFile = () => {
+    try {
+      if (!framesRef.current.length) {
+        setError("No frames to save.");
+        return;
+      }
+      downloadFrameFile(framesRef.current, speed);
+      setError(null);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
+  const handleLoadFramesClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFramesFileSelected = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const result = await readFrameFile(file);
+      onFramesChange(result.frames);
+      setMode("pixel");
+      if (typeof result.speed === "number" && Number.isFinite(result.speed)) {
+        setSpeed(result.speed);
+      }
+      setError(null);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      event.target.value = "";
+    }
+  };
+
+  const applyExample = (example: ExampleAnimation) => {
+    const exampleFrames = example.frames.map((frame) => cloneFrame(frame));
+    onFramesChange(exampleFrames);
+    setMode("pixel");
+    if (typeof example.speed === "number" && Number.isFinite(example.speed)) {
+      setSpeed(example.speed);
+    }
+    setError(null);
+  };
+
+  const handlePersistVideoState = (state: PersistedVideoState | null) => {
+    setVideoState(state);
   };
 
   const onFramesChange = (updated: BinaryFrame[]) => {
@@ -340,6 +474,56 @@ export default function BadgeApp() {
       </header>
 
       <main className="max-w-6xl mx-auto px-6 py-10 flex flex-col gap-8">
+        {(examples.length > 0 || examplesError) && (
+          <section className="card bg-base-100 shadow-md border border-base-300">
+            <div className="card-body gap-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-lg font-semibold">Quick-start examples</h3>
+                  <p className="text-sm opacity-80">
+                    Loaded automatically on first visit. Pick another to replace your current pixel frames.
+                  </p>
+                </div>
+                <span className="badge badge-outline">
+                  {examples.length} example{examples.length === 1 ? "" : "s"}
+                </span>
+              </div>
+              {examplesError ? (
+                <div className="alert alert-warning">
+                  <span>{examplesError}</span>
+                </div>
+              ) : (
+                <div className="flex gap-3 overflow-x-auto pb-2">
+                  {examples.map((example) => (
+                    <div
+                      key={example.id}
+                      className="card bg-base-200/70 border border-base-300 min-w-[220px] max-w-xs shadow-sm"
+                    >
+                      <div className="card-body gap-3">
+                        <div>
+                          <div className="font-semibold text-sm">{example.title}</div>
+                          <p className="text-xs opacity-75 leading-5">{example.description}</p>
+                        </div>
+                        <div className="flex flex-wrap gap-2 text-xs">
+                          <span className="badge badge-ghost">
+                            {example.frames.length} frames
+                          </span>
+                          {example.speed && (
+                            <span className="badge badge-outline">Speed {example.speed}</span>
+                          )}
+                        </div>
+                        <button className="btn btn-primary btn-sm" onClick={() => applyExample(example)}>
+                          Load example
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+
         <div role="tablist" className="tabs tabs-boxed w-fit bg-base-100 shadow">
           {[
             { id: "video", label: "Video/GIF → Badge" },
@@ -361,7 +545,12 @@ export default function BadgeApp() {
             <div className="card bg-base-100 shadow-xl border border-base-300">
               <div className="card-body">
                 {mode === "video" ? (
-                  <VideoPanel fps={fps} onFramesChange={onFramesChange} />
+                  <VideoPanel
+                    fps={fps}
+                    onFramesChange={onFramesChange}
+                    persistedState={videoState}
+                    onPersistState={handlePersistVideoState}
+                  />
                 ) : (
                   <PixelEditorPanel fps={fps} frames={frames} onChange={onFramesChange} />
                 )}
@@ -383,6 +572,14 @@ export default function BadgeApp() {
                     disabled={!sprite}
                   >
                     Download
+                  </button>
+                </div>
+                <div className="flex gap-2">
+                  <button className="btn btn-outline btn-sm flex-1" onClick={handleSaveFramesToFile}>
+                    Save frames to file
+                  </button>
+                  <button className="btn btn-outline btn-sm flex-1" onClick={handleLoadFramesClick}>
+                    Load frames from file
                   </button>
                 </div>
                 {error && (
@@ -466,6 +663,14 @@ export default function BadgeApp() {
           </div>
         </footer>
       </main>
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="application/json"
+        className="hidden"
+        onChange={handleFramesFileSelected}
+      />
 
       {showSteps && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">

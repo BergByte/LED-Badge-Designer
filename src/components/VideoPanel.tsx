@@ -10,10 +10,13 @@ import {
 } from "@/config/constants";
 import { BinaryFrame } from "@/types/frames";
 import { createBlankFrame } from "@/utils/frameUtils";
+import { PersistedVideoState } from "@/utils/persistence";
 
 type Props = {
   fps: number;
   onFramesChange: (frames: BinaryFrame[]) => void;
+  persistedState?: PersistedVideoState | null;
+  onPersistState?: (state: PersistedVideoState | null) => void;
 };
 
 type VideoMeta = {
@@ -39,7 +42,42 @@ type Progress = {
   status: "idle" | "preparing" | "rendering" | "cancelled" | "done";
 };
 
-export default function VideoPanel({ fps, onFramesChange }: Props) {
+const percentToPixels = (
+  percent: { x: number; y: number; width: number; height: number },
+  dimensions: { width: number; height: number }
+): Area => ({
+  x: percent.x * dimensions.width,
+  y: percent.y * dimensions.height,
+  width: percent.width * dimensions.width,
+  height: percent.height * dimensions.height
+});
+
+const pixelsToPercent = (
+  area: Area,
+  dimensions: { width: number; height: number }
+): { x: number; y: number; width: number; height: number } => {
+  const width = Math.max(dimensions.width, 1);
+  const height = Math.max(dimensions.height, 1);
+  return {
+    x: area.x / width,
+    y: area.y / height,
+    width: area.width / width,
+    height: area.height / height
+  };
+};
+
+export default function VideoPanel({
+  fps,
+  onFramesChange,
+  persistedState,
+  onPersistState
+}: Props) {
+  const persistedStateRef = useRef<PersistedVideoState | null>(persistedState ?? null);
+  const lastPersistedRef = useRef<string>("");
+  const initialCropFromPersisted =
+    persistedState?.cropAreaPercent && persistedState.sourceDimensions
+      ? percentToPixels(persistedState.cropAreaPercent, persistedState.sourceDimensions)
+      : null;
   const videoRef = useRef<HTMLVideoElement>(null);
   const cropperVideoRef = useRef<HTMLVideoElement | null>(null);
   const [mediaUrl, setMediaUrl] = useState<string | null>(null);
@@ -47,8 +85,8 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
   const [sourceKind, setSourceKind] = useState<SourceKind | null>(null);
   const gifFramesRef = useRef<GifFrame[] | null>(null);
   const [gifFrames, setGifFrames] = useState<GifFrame[] | null>(null);
-  const [startTime, setStartTime] = useState(0);
-  const [duration, setDuration] = useState<number | null>(null);
+  const [startTime, setStartTime] = useState(persistedState?.startTime ?? 0);
+  const [duration, setDuration] = useState<number | null>(persistedState?.duration ?? null);
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const [progress, setProgress] = useState<Progress>({
@@ -56,17 +94,23 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
     total: 0,
     status: "idle"
   });
-  const [threshold, setThreshold] = useState(128);
-  const [invertOutput, setInvertOutput] = useState(false);
-  const [crop, setCrop] = useState({ x: 0, y: 0 });
-  const [zoom, setZoom] = useState(1);
-  const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(null);
+  const [threshold, setThreshold] = useState(persistedState?.threshold ?? 128);
+  const [invertOutput, setInvertOutput] = useState(persistedState?.invertOutput ?? false);
+  const [crop, setCrop] = useState(persistedState?.crop ?? { x: 0, y: 0 });
+  const [zoom, setZoom] = useState(persistedState?.zoom ?? 1);
+  const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(
+    initialCropFromPersisted
+  );
   const cancelRef = useRef(false);
   const updateThreshold = (value: number) => {
     const safeValue = Number.isFinite(value) ? value : threshold;
     const clamped = Math.min(255, Math.max(0, Math.round(safeValue)));
     setThreshold(clamped);
   };
+
+  useEffect(() => {
+    persistedStateRef.current = persistedState ?? null;
+  }, [persistedState]);
 
   const getImageDecoder = () => {
     if (typeof window === "undefined") return null;
@@ -291,8 +335,9 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
 
   const initialCropArea = useMemo(() => {
     if (!meta) return null;
+    if (croppedAreaPixels) return croppedAreaPixels;
     return centerCropArea(meta.width, meta.height);
-  }, [meta]);
+  }, [croppedAreaPixels, meta]);
 
   const maxTrimSpanSeconds = useMemo(() => {
     return MAX_VIDEO_FRAMES / fps;
@@ -317,6 +362,26 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
     const end = Math.min(videoDuration, clampedStart + clampedDuration);
 
     return { start: clampedStart, duration: Math.max(minDuration, end - clampedStart), end };
+  };
+
+  const restoreTrim = (videoDuration: number, defaultDuration: number) => {
+    const saved = persistedStateRef.current;
+    if (!saved) return { start: 0, duration: defaultDuration };
+    return clampTrim(
+      saved.startTime ?? 0,
+      saved.duration ?? defaultDuration,
+      videoDuration,
+      maxTrimSpanSeconds
+    );
+  };
+
+  const restoreCropArea = (
+    dimensions: { width: number; height: number },
+    fallback: Area
+  ): Area => {
+    const saved = persistedStateRef.current;
+    if (!saved || !saved.cropAreaPercent) return fallback;
+    return percentToPixels(saved.cropAreaPercent, dimensions);
   };
 
   const trim = useMemo(() => {
@@ -376,12 +441,17 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
           width: decoded.width,
           height: decoded.height
         });
-        setStartTime(0);
-        setDuration(cappedDuration);
+        const restoredTrim = restoreTrim(decoded.duration, cappedDuration);
+        setStartTime(restoredTrim.start);
+        setDuration(restoredTrim.duration);
         const defaultCrop = centerCropArea(decoded.width, decoded.height);
-        setCroppedAreaPixels(defaultCrop);
-        setCrop({ x: 0, y: 0 });
-        setZoom(1);
+        const restoredCrop = restoreCropArea(
+          { width: decoded.width, height: decoded.height },
+          defaultCrop
+        );
+        setCroppedAreaPixels(restoredCrop);
+        setCrop(persistedStateRef.current?.crop ?? { x: 0, y: 0 });
+        setZoom(persistedStateRef.current?.zoom ?? 1);
         if (decoded.usedDefaultDuration) {
           setWarning(
             `GIF is missing frame delay metadata; defaulting to ${DEFAULT_GIF_FRAME_DURATION.toFixed(
@@ -402,12 +472,17 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
       const cappedDuration = Math.min(metaInfo.duration, maxTrimSpanSeconds);
       setGifFramesWithCleanup(null);
       setMeta(metaInfo);
-      setStartTime(0);
-      setDuration(cappedDuration);
+      const restoredTrim = restoreTrim(metaInfo.duration, cappedDuration);
+      setStartTime(restoredTrim.start);
+      setDuration(restoredTrim.duration);
       const defaultCrop = centerCropArea(metaInfo.width, metaInfo.height);
-      setCroppedAreaPixels(defaultCrop);
-      setCrop({ x: 0, y: 0 });
-      setZoom(1);
+      const restoredCrop = restoreCropArea(
+        { width: metaInfo.width, height: metaInfo.height },
+        defaultCrop
+      );
+      setCroppedAreaPixels(restoredCrop);
+      setCrop(persistedStateRef.current?.crop ?? { x: 0, y: 0 });
+      setZoom(persistedStateRef.current?.zoom ?? 1);
 
       const video = videoRef.current;
       if (video) {
@@ -427,6 +502,43 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
     if (trim.start !== startTime) setStartTime(trim.start);
     if (trim.duration !== duration) setDuration(trim.duration);
   }, [duration, startTime, trim]);
+
+  useEffect(() => {
+    if (!onPersistState) return;
+    const dimensions =
+      meta && meta.width > 0 && meta.height > 0
+        ? { width: meta.width, height: meta.height }
+        : persistedStateRef.current?.sourceDimensions;
+    const cropAreaPercent =
+      meta && croppedAreaPixels && meta.width > 0 && meta.height > 0
+        ? pixelsToPercent(croppedAreaPixels, { width: meta.width, height: meta.height })
+        : persistedStateRef.current?.cropAreaPercent ?? null;
+    const nextState: PersistedVideoState = {
+      threshold,
+      invertOutput,
+      startTime,
+      duration,
+      zoom,
+      crop,
+      cropAreaPercent,
+      sourceDimensions: dimensions,
+      lastMediaName: meta?.name ?? persistedStateRef.current?.lastMediaName
+    };
+    const serialized = JSON.stringify(nextState);
+    if (serialized === lastPersistedRef.current) return;
+    lastPersistedRef.current = serialized;
+    onPersistState(nextState);
+  }, [
+    crop,
+    croppedAreaPixels,
+    duration,
+    invertOutput,
+    meta,
+    onPersistState,
+    startTime,
+    threshold,
+    zoom
+  ]);
 
   useEffect(() => {
     if (sourceKind !== "video") return;
