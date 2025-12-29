@@ -57,6 +57,7 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
     status: "idle"
   });
   const [threshold, setThreshold] = useState(128);
+  const [invertOutput, setInvertOutput] = useState(false);
   const [crop, setCrop] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(null);
@@ -455,8 +456,9 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
       const b = data[i + 2];
       const gray = 0.299 * r + 0.587 * g + 0.114 * b;
       const val = gray >= threshold ? 0 : 255; // invert: >=threshold -> 0
+      const finalVal = invertOutput ? (val === 0 ? 255 : 0) : val;
       const idx = i / 4;
-      out[idx] = val;
+      out[idx] = finalVal;
     }
     return out;
   };
@@ -620,42 +622,6 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
             (inverted binary with adjustable threshold).
           </p>
         </div>
-        <button
-          className="btn btn-link btn-sm"
-          onClick={() => {
-            setStartTime(0);
-            if (meta) {
-              setEndTime(Math.min(meta.duration, maxTrimSpanSeconds));
-            }
-          }}
-        >
-          Reset trim
-        </button>
-      </div>
-
-      <div className="card bg-base-100 border border-base-300 shadow-sm">
-        <div className="card-body gap-3">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <div className="font-semibold text-sm">Threshold</div>
-              <p className="text-xs opacity-70">
-                Choose the cutoff used to convert grayscale into black/white pixels (higher = more black).
-              </p>
-            </div>
-            <div className="flex items-center gap-3">
-              <input
-                type="range"
-                min={0}
-                max={255}
-                step={1}
-                className="range range-sm max-w-xs"
-                value={threshold}
-                onChange={(e) => setThreshold(Number(e.target.value))}
-              />
-              <div className="w-12 text-right text-sm tabular-nums">{threshold}</div>
-            </div>
-          </div>
-        </div>
       </div>
 
       <label className="form-control w-full">
@@ -727,62 +693,126 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
               )}
             </div>
             <div className="flex flex-col gap-3 text-sm">
-              <p>
-                Crop is locked to the badge aspect (48:11). Drag to reposition and use zoom
-                to punch in before scaling down to 48×11.
-              </p>
-              <label className="form-control">
-                <div className="label">
-                  <span className="label-text">Zoom</span>
-                  <span className="label-text-alt">{zoom.toFixed(2)}×</span>
+              <div className="card bg-base-100 border border-base-300 shadow-sm">
+                <div className="card-body gap-3">
+                  <div className="font-semibold text-sm">Crop & Zoom</div>
+                  <p className="text-xs opacity-70">
+                    Crop is locked to the badge aspect (48:11). Drag to reposition and use zoom
+                    to punch in before scaling down to 48×11.
+                  </p>
+                  <label className="form-control">
+                    <div className="label">
+                      <span className="label-text">Zoom</span>
+                      <span className="label-text-alt">{zoom.toFixed(2)}×</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={1}
+                      max={5}
+                      step={0.01}
+                      value={zoom}
+                      onChange={(e) => setZoom(Number(e.target.value))}
+                      className="range range-primary"
+                    />
+                  </label>
+                  <span className="text-xs opacity-70">
+                    Crop area:{" "}
+                    {croppedAreaPixels
+                      ? `${Math.round(croppedAreaPixels.width)}×${Math.round(
+                          croppedAreaPixels.height
+                        )} @ (${Math.round(croppedAreaPixels.x)}, ${Math.round(
+                          croppedAreaPixels.y
+                        )})`
+                      : "Using centered crop"}
+                  </span>
                 </div>
-                <input
-                  type="range"
-                  min={1}
-                  max={5}
-                  step={0.01}
-                  value={zoom}
-                  onChange={(e) => setZoom(Number(e.target.value))}
-                  className="range range-primary"
-                />
-              </label>
-              <span className="text-xs opacity-70">
-                Crop area:{" "}
-                {croppedAreaPixels
-                  ? `${Math.round(croppedAreaPixels.width)}×${Math.round(
-                      croppedAreaPixels.height
-                    )} @ (${Math.round(croppedAreaPixels.x)}, ${Math.round(
-                      croppedAreaPixels.y
-                    )})`
-                  : "Using centered crop"}
-              </span>
+              </div>
+
+              <div className="card bg-base-100 border border-base-300 shadow-sm">
+                <div className="card-body gap-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="font-semibold text-sm">Threshold</div>
+                      <p className="text-xs opacity-70">
+                        Choose the cutoff used to convert grayscale into black/white pixels (higher = more black).
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="range"
+                        min={0}
+                        max={255}
+                        step={1}
+                        className="range range-sm max-w-xs"
+                        value={threshold}
+                        onChange={(e) => setThreshold(Number(e.target.value))}
+                      />
+                      <div className="w-12 text-right text-sm tabular-nums">{threshold}</div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="checkbox"
+                      className="toggle toggle-sm"
+                      checked={invertOutput}
+                      onChange={(e) => setInvertOutput(e.target.checked)}
+                    />
+                    <div className="text-sm">
+                      <div className="font-semibold">Invert output</div>
+                      <p className="text-xs opacity-70">
+                        Flip black/white after thresholding.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 
-          <div className="flex flex-col gap-3">
-            <div className="flex items-center justify-between text-sm opacity-80">
-              <span>
-                Trim start: {startTime.toFixed(2)}s · Trim end: {endTime.toFixed(2)}s
-              </span>
-              <span>
-                Span: {effectiveDuration.toFixed(2)}s · Est. frames: {estimatedFrames}
-                (cap {MAX_VIDEO_FRAMES})
-              </span>
-            </div>
-            <div className="flex items-center gap-4">
-              <label className="form-control w-full">
-                <div className="label">
-                  <span className="label-text text-xs">Start</span>
-                  <span className="label-text-alt text-xs">
-                    {startTime.toFixed(2)}s
-                  </span>
-                </div>
+          <div className="card bg-base-100 border border-base-300 shadow-sm">
+            <div className="card-body gap-4">
+              <div className="flex items-center justify-between text-sm opacity-80">
+                <span>
+                  Trim start: {startTime.toFixed(2)}s · Trim end: {endTime.toFixed(2)}s
+                </span>
+                <span>
+                  Span: {effectiveDuration.toFixed(2)}s · Est. frames: {estimatedFrames}
+                  (cap {MAX_VIDEO_FRAMES})
+                </span>
+              </div>
+              <div className="flex items-center gap-4">
+                <label className="form-control w-full">
+                  <div className="label">
+                    <span className="label-text text-xs">Start</span>
+                    <span className="label-text-alt text-xs">
+                      {startTime.toFixed(2)}s
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={meta.duration}
+                    step={0.01}
+                    value={startTime}
+                    onChange={(e) => {
+                      const next = Number(e.target.value);
+                      const { start, end } = clampTimes(
+                        next,
+                        endTime,
+                        meta.duration,
+                        maxTrimSpanSeconds
+                      );
+                      setStartTime(start);
+                      setEndTime(end);
+                    }}
+                    className="range range-secondary"
+                  />
+                </label>
                 <input
-                  type="range"
-                  min={0}
-                  max={meta.duration}
-                  step={0.01}
-                  value={startTime}
+                  type="number"
+                  className="input input-bordered input-sm w-24"
+                  value={startTime.toFixed(2)}
+                  step={0.1}
                   onChange={(e) => {
                     const next = Number(e.target.value);
                     const { start, end } = clampTimes(
@@ -794,39 +824,39 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
                     setStartTime(start);
                     setEndTime(end);
                   }}
-                  className="range range-secondary"
                 />
-              </label>
-              <input
-                type="number"
-                className="input input-bordered input-sm w-24"
-                value={startTime.toFixed(2)}
-                step={0.1}
-                onChange={(e) => {
-                  const next = Number(e.target.value);
-                  const { start, end } = clampTimes(
-                    next,
-                    endTime,
-                    meta.duration,
-                    maxTrimSpanSeconds
-                  );
-                  setStartTime(start);
-                  setEndTime(end);
-                }}
-              />
-            </div>
-            <div className="flex items-center gap-4">
-              <label className="form-control w-full">
-                <div className="label">
-                  <span className="label-text text-xs">End</span>
-                  <span className="label-text-alt text-xs">{endTime.toFixed(2)}s</span>
-                </div>
+              </div>
+              <div className="flex items-center gap-4">
+                <label className="form-control w-full">
+                  <div className="label">
+                    <span className="label-text text-xs">End</span>
+                    <span className="label-text-alt text-xs">{endTime.toFixed(2)}s</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={meta.duration}
+                    step={0.01}
+                    value={endTime}
+                    onChange={(e) => {
+                      const next = Number(e.target.value);
+                      const { start, end } = clampTimes(
+                        startTime,
+                        next,
+                        meta.duration,
+                        maxTrimSpanSeconds
+                      );
+                      setStartTime(start);
+                      setEndTime(end);
+                    }}
+                    className="range range-secondary"
+                  />
+                </label>
                 <input
-                  type="range"
-                  min={0}
-                  max={meta.duration}
-                  step={0.01}
-                  value={endTime}
+                  type="number"
+                  className="input input-bordered input-sm w-24"
+                  value={endTime.toFixed(2)}
+                  step={0.1}
                   onChange={(e) => {
                     const next = Number(e.target.value);
                     const { start, end } = clampTimes(
@@ -838,31 +868,13 @@ export default function VideoPanel({ fps, onFramesChange }: Props) {
                     setStartTime(start);
                     setEndTime(end);
                   }}
-                  className="range range-secondary"
                 />
-              </label>
-              <input
-                type="number"
-                className="input input-bordered input-sm w-24"
-                value={endTime.toFixed(2)}
-                step={0.1}
-                onChange={(e) => {
-                  const next = Number(e.target.value);
-                  const { start, end } = clampTimes(
-                    startTime,
-                    next,
-                    meta.duration,
-                    maxTrimSpanSeconds
-                  );
-                  setStartTime(start);
-                  setEndTime(end);
-                }}
-              />
+              </div>
+              <p className="text-xs opacity-70">
+                Aspect policy: crop locked to 48:11 (default is centered), nearest-neighbor
+                scale to 48×11, then grayscale → threshold (slider sets cutoff; ≥threshold → 0) with optional inversion.
+              </p>
             </div>
-            <p className="text-xs opacity-70">
-              Aspect policy: crop locked to 48:11 (default is centered), nearest-neighbor
-              scale to 48×11, then grayscale → threshold (slider sets cutoff; ≥threshold → 0).
-            </p>
           </div>
 
           <div className="flex flex-wrap gap-2">
