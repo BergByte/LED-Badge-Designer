@@ -203,7 +203,9 @@ const TutorialModal = ({
             <h3 className="font-semibold text-base">1) Start from a video or GIF</h3>
             <ul className="list-disc list-inside text-sm opacity-80 space-y-1">
               <li>Upload .mp4/.mov/.webm or animated GIF; keep clips short—sprites are capped to 80 frames.</li>
-              <li>Use the trim sliders to keep only the span you need; estimated frame count updates with the selected speed.</li>
+              <li>
+                Use Trim Start plus Duration to keep only the span you need; estimated frame count updates with the selected speed.
+              </li>
               <li>The crop box is locked to 48:11. Pan/zoom to choose the region that will be scaled down to 48×11.</li>
               <li>Processing is in-browser: the app scales, converts to grayscale, thresholds (≥128 → black), and inverts for the badge.</li>
             </ul>
