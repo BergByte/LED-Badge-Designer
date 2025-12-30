@@ -300,6 +300,7 @@ export default function BadgeApp() {
   const [examplesError, setExamplesError] = useState<string | null>(null);
   const [hydratedFromStorage, setHydratedFromStorage] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const examplesScrollRef = useRef<HTMLDivElement>(null);
   const [videoState, setVideoState] = useState<PersistedVideoState | null>(null);
   const videoStateRef = useRef<PersistedVideoState | null>(null);
   const [sprite, setSprite] = useState<RenderedSprite | null>(null);
@@ -447,6 +448,13 @@ export default function BadgeApp() {
     setError(null);
   };
 
+  const scrollExamples = (direction: "left" | "right") => {
+    const node = examplesScrollRef.current;
+    if (!node) return;
+    const delta = direction === "left" ? -260 : 260;
+    node.scrollBy({ left: delta, behavior: "smooth" });
+  };
+
   const handlePersistVideoState = (state: PersistedVideoState | null) => {
     setVideoState(state);
   };
@@ -484,20 +492,33 @@ export default function BadgeApp() {
                     Loaded automatically on first visit. Pick another to replace your current pixel frames.
                   </p>
                 </div>
-                <span className="badge badge-outline">
-                  {examples.length} example{examples.length === 1 ? "" : "s"}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="badge badge-outline">
+                    {examples.length} example{examples.length === 1 ? "" : "s"}
+                  </span>
+                  <div className="join">
+                    <button className="btn btn-outline btn-xs join-item" onClick={() => scrollExamples("left")}>
+                      ←
+                    </button>
+                    <button className="btn btn-outline btn-xs join-item" onClick={() => scrollExamples("right")}>
+                      →
+                    </button>
+                  </div>
+                </div>
               </div>
               {examplesError ? (
                 <div className="alert alert-warning">
                   <span>{examplesError}</span>
                 </div>
               ) : (
-                <div className="flex gap-3 overflow-x-auto pb-2">
+                <div
+                  ref={examplesScrollRef}
+                  className="flex gap-3 overflow-x-auto pb-2 scroll-smooth snap-x snap-mandatory"
+                >
                   {examples.map((example) => (
                     <div
                       key={example.id}
-                      className="card bg-base-200/70 border border-base-300 min-w-[220px] max-w-xs shadow-sm"
+                      className="card bg-base-200/70 border border-base-300 min-w-[220px] max-w-xs shadow-sm snap-start"
                     >
                       <div className="card-body gap-3">
                         <div>

@@ -118,38 +118,26 @@ const buildSparkle = () => {
 
 const EXAMPLE_BUILDERS = [buildScanner, buildWave, buildSparkle];
 
-const writeIni = (dest, example) => {
-  const lines = [
-    "[meta]",
-    `id=${example.id}`,
-    `name=${example.name}`,
-    `description=${example.description}`,
-    `speed=${example.speed ?? ""}`
-  ];
-  fs.writeFileSync(dest, lines.join("\n"), "utf8");
-};
-
 const main = () => {
   const root = path.join(process.cwd(), "public", "examples");
   ensureDir(root);
-  const manifest = [];
 
   EXAMPLE_BUILDERS.forEach((builder) => {
     const example = builder();
     const dir = path.join(root, example.id);
     ensureDir(dir);
     const framesFile = framesToFile(example.frames.map((f) => cloneFrame(f)), example.speed);
-    fs.writeFileSync(path.join(dir, "frames.json"), JSON.stringify(framesFile, null, 2));
-    writeIni(path.join(dir, "metadata.ini"), example);
-    manifest.push({
-      id: example.id,
-      ini: `examples/${example.id}/metadata.ini`,
-      frames: `examples/${example.id}/frames.json`
-    });
+    fs.writeFileSync(path.join(dir, `${example.id}.json`), JSON.stringify(framesFile, null, 2));
+    const lines = [
+      "[meta]",
+      `id=${example.id}`,
+      `name=${example.name}`,
+      `description=${example.description}`,
+      `speed=${example.speed ?? ""}`
+    ];
+    fs.writeFileSync(path.join(dir, `${example.id}.ini`), lines.join("\n"), "utf8");
   });
-
-  fs.writeFileSync(path.join(root, "index.json"), JSON.stringify(manifest, null, 2));
-  console.log(`Wrote ${manifest.length} examples to ${root}`);
+  console.log("Examples generated in public/examples (ini/json pairs per folder).");
 };
 
 main();
